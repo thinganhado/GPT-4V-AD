@@ -8,6 +8,7 @@ from typing import List, Tuple
 import librosa
 import numpy as np
 import soundfile as sf
+import csv
 import torch
 from PIL import Image
 from scipy.ndimage import gaussian_filter1d
@@ -178,6 +179,11 @@ def overlay_mask_on_image(base_img: Image.Image, mask_img: Image.Image, alpha: f
     out = Image.alpha_composite(base, overlay)
     return out.convert("RGB")
 
+def _load_region_masks(pth_path: Path):
+    data = torch.load(pth_path, map_location="cpu")
+    masks = data.get("masks", [])
+    return [np.asarray(m, dtype=bool) for m in masks]
+
 
 def main():
     p = argparse.ArgumentParser(description="Overlay artifact masks on spectrogram images.")
@@ -188,6 +194,8 @@ def main():
     p.add_argument("--spec_dir", "--spec-dir", dest="spec_dir", type=str, default="/scratch3/che489/Ha/interspeech/localization/specs")
     p.add_argument("--spec_suffix", "--spec-suffix", dest="spec_suffix", type=str, default=".png")
     p.add_argument("--output_dir", "--out-dir", dest="output_dir", type=str, required=True)
+    p.add_argument("--region_outputs", "--region-outputs", dest="region_outputs", type=str, default="/scratch3/che489/Ha/interspeech/localization/Ms_region_outputs")
+    p.add_argument("--region_methods", "--region-methods", dest="region_methods", nargs="+", default=["grid", "superpixel", "sam"])
 
     p.add_argument("--sr", type=int, default=16000)
     p.add_argument("--n_fft", type=int, default=1024)
@@ -218,6 +226,7 @@ def main():
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     spec_dir = Path(args.spec_dir)
+    region_root = Path(args.region_outputs)
 
     if args.input_pairs:
         pairs = read_pairs_from_csv(Path(args.input_pairs))
@@ -231,6 +240,7 @@ def main():
 
     print(f"[INFO] Found {len(pairs)} pairs -> {out_dir}")
 
+    rows = []
     for i, (r, f) in enumerate(pairs, 1):
         try:
             yb, srb = sf.read(r)
@@ -279,10 +289,58 @@ def main():
             if args.save_mask:
                 mask_img.save(out_dir / f"{stem}_diff_mask.png")
 
+            diff_mask = np.array(mask_img) > 0
+            for method in args.region_methods:
+                pth_path = region_root / method / f"{stem}_{method}_masks.pth"
+                if not pth_path.exists():
+                    print(f"[WARN] Missing region masks for {stem} ({method}): {pth_path}")
+                    continue
+                region_masks = _load_region_masks(pth_path)
+                for ridx, region_mask in enumerate(region_masks, 1):
+                    if region_mask.shape != diff_mask.shape:
+                        region_img = Image.fromarray(region_mask.astype(np.uint8) * 255, mode="L")
+                        region_mask = np.array(region_img.resize(diff_mask.shape[::-1], Image.NEAREST)) > 0
+                    region_pixels = int(region_mask.sum())
+                    if region_pixels == 0:
+                        continue
+                    overlap_pixels = int(np.logical_and(region_mask, diff_mask).sum())
+                    coverage = float(overlap_pixels) / float(region_pixels)
+                    present = 1 if overlap_pixels > 0 else 0
+                    rows.append(
+                        {
+                            "image": stem,
+                            "method": method,
+                            "region_id": ridx,
+                            "region_pixels": region_pixels,
+                            "overlap_pixels": overlap_pixels,
+                            "coverage": coverage,
+                            "present": present,
+                        }
+                    )
+
             print(f"[OK] {i:04d}/{len(pairs):04d} {stem} tau={tau:.6f}")
 
         except Exception as e:
             print(f"[ERR] {i:04d}/{len(pairs):04d} {Path(r).name}->{Path(f).name}: {e}")
+
+    if rows:
+        csv_path = out_dir / "region_diff_stats.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "image",
+                    "method",
+                    "region_id",
+                    "region_pixels",
+                    "overlap_pixels",
+                    "coverage",
+                    "present",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"[INFO] Wrote region overlap stats -> {csv_path}")
 
     print("[DONE] All pairs processed.")
 
