@@ -27,7 +27,9 @@ class GPT4V(object):
 
     def region_division(self):
         image_files = []
-        if self.cfg.dataset_name in ['mvtec']:
+        if getattr(self.cfg, "input_dir", None):
+            image_files = glob.glob(os.path.join(self.cfg.input_dir, "**", "*.png"), recursive=True)
+        elif self.cfg.dataset_name in ['mvtec']:
             root = self.cfg.dataset_name
             image_files = glob.glob(f'{root}/*/test/*/???.png')
             # image_files = [image_file.replace(f'{root}/', '') for image_file in image_files]
@@ -87,6 +89,31 @@ class GPT4V(object):
                 self.sovle_masks(img, image_file, masks, 'sam')
                 print(f'{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for sam')
 
+    def _infer_cls_name(self, image_file):
+        if getattr(self.cfg, "input_dir", None):
+            if getattr(self.cfg, "prompt_class", None):
+                return self.cfg.prompt_class
+            try:
+                rel = os.path.relpath(image_file, self.cfg.input_dir)
+            except ValueError:
+                rel = image_file
+            parts = rel.split(os.sep)
+            if len(parts) > 1:
+                return parts[0]
+            return os.path.splitext(os.path.basename(image_file))[0]
+        image_file_tmp = image_file
+        if 'mvtec' in image_file_tmp:   # MVTec
+            image_file_tmp = image_file_tmp.replace(image_file_tmp.split('/')[0], '')
+        if 'visa' in image_file_tmp:  # VisA
+            image_file_tmp = image_file_tmp.replace(image_file_tmp.split('/')[0], '')
+        if image_file_tmp.startswith('/'):
+            image_file_tmp = image_file_tmp[1:]
+        cls_name = image_file_tmp.split('/')[0]
+        number_list = [str(n) for n in list(range(10))]
+        if cls_name[-1] in number_list:
+            cls_name = cls_name[:-1]
+        return cls_name
+
     def sovle_masks(self, img, image_file, masks, method):
         mask_edge = np.zeros_like(img, dtype=np.bool).astype(np.uint8) * 255
         mask_edge_number = np.zeros_like(img, dtype=np.uint8)
@@ -133,17 +160,7 @@ class GPT4V(object):
         cv2.imwrite(image_file.replace(suffix, f'_{method}_img_edge_number.png'), cv2.cvtColor(img_edge_number, cv2.COLOR_BGR2RGB))
         torch.save(dict(masks=masks), image_file.replace(suffix, f'_{method}_masks.pth'))
 
-        image_file_tmp = image_file
-        if 'mvtec' in image_file_tmp:   # MVTec
-            image_file_tmp = image_file_tmp.replace(image_file_tmp.split('/')[0], '')
-        if 'visa' in image_file_tmp:  # VisA
-            image_file_tmp = image_file_tmp.replace(image_file_tmp.split('/')[0], '')
-        if image_file_tmp.startswith('/'):
-            image_file_tmp = image_file_tmp[1:]
-        cls_name = image_file_tmp.split('/')[0]
-        number_list = [str(n) for n in list(range(10))]
-        if cls_name[-1] in number_list:
-            cls_name = cls_name[:-1]
+        cls_name = self._infer_cls_name(image_file)
         prompt_cls = f"This is an image of {cls_name}."
         prompt_describe = f"The image has different region divisions, each distinguished by white edges and each with a unique numerical identifier within the region, starting from 1. Each region may exhibit anomalies of unknown types, and if any region exhibits an anomaly, the normal image is considered anomalous. Anomaly scores range from 0 to 1, with higher values indicating a higher probability of an anomaly. Please output the image anomaly score, as well as the anomaly scores for the regions with anomalies. Provide the answer in the following format: \"image anomaly score: 0.9; region 1: 0.9; region 3: 0.7.\". Ignore the region that does not contain anomalies."
         f = open(image_file.replace(suffix, f'_prompt_wo_cls.txt'), 'w')
@@ -166,6 +183,8 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cpu')
 
     # generate region divisions with labeled number
+    parser.add_argument('--input-dir', type=str, default=None, help='Custom folder of PNG images.')
+    parser.add_argument('--prompt-class', type=str, default=None, help='Class name to use in prompts.')
     parser.add_argument('--dataset_name', type=str, default='mvtec')
     # parser.add_argument('--dataset_name', type=str, default='visa')
     parser.add_argument('--region_division_methods', type=list, default=['superpixel'])
