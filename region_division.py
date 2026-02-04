@@ -56,6 +56,8 @@ class GPT4V(object):
         image_files.sort()
         if self.cfg.num_shards > 1:
             image_files = image_files[self.cfg.shard_id::self.cfg.num_shards]
+        if self.cfg.limit is not None:
+            image_files = image_files[: self.cfg.limit]
         for idx1, image_file in enumerate(image_files):
             self.img_size = self.cfg.img_size
             self.div_num = self.cfg.div_num
@@ -116,6 +118,14 @@ class GPT4V(object):
             cls_name = cls_name[:-1]
         return cls_name
 
+    def _output_paths(self, image_file, method):
+        out_root = getattr(self.cfg, "output_dir", None) or os.path.dirname(image_file)
+        method_dir = os.path.join(out_root, method)
+        os.makedirs(method_dir, exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(image_file))[0]
+        suffix = os.path.splitext(image_file)[-1]
+        return method_dir, base_name, suffix
+
     def sovle_masks(self, img, image_file, masks, method):
         mask_edge = np.zeros_like(img, dtype=np.bool).astype(np.uint8) * 255
         mask_edge_number = np.zeros_like(img, dtype=np.uint8)
@@ -155,25 +165,25 @@ class GPT4V(object):
             img_edge[mask_edge > 100] = mask_edge[mask_edge > 100]
             img_edge_number[mask_edge_number > 100] = mask_edge_number[mask_edge_number > 100]
 
-        suffix = os.path.splitext(image_file)[-1]
-        cv2.imwrite(image_file.replace(suffix, f'_{method}_mask_edge.png'), cv2.cvtColor(mask_edge, cv2.COLOR_BGR2RGB))
-        cv2.imwrite(image_file.replace(suffix, f'_{method}_mask_edge_number.png'), cv2.cvtColor(mask_edge_number, cv2.COLOR_BGR2RGB))
-        cv2.imwrite(image_file.replace(suffix, f'_{method}_img_edge.png'), cv2.cvtColor(img_edge, cv2.COLOR_BGR2RGB))
-        cv2.imwrite(image_file.replace(suffix, f'_{method}_img_edge_number.png'), cv2.cvtColor(img_edge_number, cv2.COLOR_BGR2RGB))
-        torch.save(dict(masks=masks), image_file.replace(suffix, f'_{method}_masks.pth'))
+        method_dir, base_name, suffix = self._output_paths(image_file, method)
+        cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_mask_edge.png'), cv2.cvtColor(mask_edge, cv2.COLOR_BGR2RGB))
+        cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_mask_edge_number.png'), cv2.cvtColor(mask_edge_number, cv2.COLOR_BGR2RGB))
+        cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_img_edge.png'), cv2.cvtColor(img_edge, cv2.COLOR_BGR2RGB))
+        cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_img_edge_number.png'), cv2.cvtColor(img_edge_number, cv2.COLOR_BGR2RGB))
+        torch.save(dict(masks=masks), os.path.join(method_dir, f'{base_name}_{method}_masks.pth'))
 
         cls_name = self._infer_cls_name(image_file)
         prompt_cls = f"This is an image of {cls_name}."
         prompt_describe = f"The image has different region divisions, each distinguished by white edges and each with a unique numerical identifier within the region, starting from 1. Each region may exhibit anomalies of unknown types, and if any region exhibits an anomaly, the normal image is considered anomalous. Anomaly scores range from 0 to 1, with higher values indicating a higher probability of an anomaly. Please output the image anomaly score, as well as the anomaly scores for the regions with anomalies. Provide the answer in the following format: \"image anomaly score: 0.9; region 1: 0.9; region 3: 0.7.\". Ignore the region that does not contain anomalies."
-        f = open(image_file.replace(suffix, f'_prompt_wo_cls.txt'), 'w')
+        f = open(os.path.join(method_dir, f'{base_name}_prompt_wo_cls.txt'), 'w')
         f.write(f'{prompt_describe}')
         f.close()
 
-        f = open(image_file.replace(suffix, f'_prompt.txt'), 'w')
+        f = open(os.path.join(method_dir, f'{base_name}_prompt.txt'), 'w')
         f.write(f'{prompt_cls} {prompt_describe}')
         f.close()
 
-        f = open(image_file.replace(suffix, f'_{method}_out.txt'), 'w')
+        f = open(os.path.join(method_dir, f'{base_name}_{method}_out.txt'), 'w')
         f.write(f'')
         f.close()
 
@@ -188,8 +198,10 @@ if __name__ == '__main__':
     parser.add_argument('--input-dir', type=str, default=None, help='Custom folder of PNG images.')
     parser.add_argument('--prompt-class', type=str, default=None, help='Class name to use in prompts.')
     parser.add_argument('--dataset_name', type=str, default='mvtec')
+    parser.add_argument('--output-dir', type=str, default=None, help='Root output folder for method subdirs.')
     parser.add_argument('--shard-id', type=int, default=0, help='Shard index for parallel runs.')
     parser.add_argument('--num-shards', type=int, default=1, help='Total number of shards.')
+    parser.add_argument('--limit', type=int, default=None, help='Limit number of images to process.')
     # parser.add_argument('--dataset_name', type=str, default='visa')
     parser.add_argument('--region_division_methods', type=list, default=['superpixel'])
     # parser.add_argument('--region_division_methods', type=list, default=['grid', 'superpixel', 'sam'])
