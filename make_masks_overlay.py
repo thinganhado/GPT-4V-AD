@@ -171,9 +171,9 @@ def resize_mask(mask, size):
     return img.resize(size, Image.NEAREST)
 
 
-def overlay_mask_on_image(base_img: Image.Image, mask_img: Image.Image, alpha: float):
+def overlay_mask_on_image(base_img: Image.Image, mask_img: Image.Image, alpha: float, color):
     base = base_img.convert("RGBA")
-    overlay = Image.new("RGBA", base.size, (255, 0, 0, 0))
+    overlay = Image.new("RGBA", base.size, (color[0], color[1], color[2], 0))
     mask_alpha = mask_img.point(lambda p: int(p * alpha))
     overlay.putalpha(mask_alpha)
     out = Image.alpha_composite(base, overlay)
@@ -196,6 +196,9 @@ def main():
     p.add_argument("--output_dir", "--out-dir", dest="output_dir", type=str, required=True)
     p.add_argument("--region_outputs", "--region-outputs", dest="region_outputs", type=str, default="/scratch3/che489/Ha/interspeech/localization/Ms_region_outputs")
     p.add_argument("--region_methods", "--region-methods", dest="region_methods", nargs="+", default=["grid", "superpixel", "sam"])
+    p.add_argument("--overlay_from_regions", "--overlay-from-regions", dest="overlay_from_regions", action="store_true")
+    p.add_argument("--overlay_region_method", "--overlay-region-method", dest="overlay_region_method", type=str, default="grid")
+    p.add_argument("--overlay_region_suffix", "--overlay-region-suffix", dest="overlay_region_suffix", type=str, default="_img_edge_number.png")
 
     p.add_argument("--sr", type=int, default=16000)
     p.add_argument("--n_fft", type=int, default=1024)
@@ -215,7 +218,8 @@ def main():
 
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--img_size", type=int, default=768)
-    p.add_argument("--alpha", type=float, default=0.45)
+    p.add_argument("--alpha", type=float, default=0.65)
+    p.add_argument("--overlay_color", "--overlay-color", dest="overlay_color", type=str, default="0,0,255")
     p.add_argument("--save_mask", action="store_true", default=False)
 
     args = p.parse_args()
@@ -237,6 +241,19 @@ def main():
 
     if args.limit is not None:
         pairs = pairs[: args.limit]
+
+    filtered = []
+    for r, f in pairs:
+        stem = Path(f).stem
+        missing = []
+        for method in args.region_methods:
+            pth_path = region_root / method / f"{stem}_{method}_masks.pth"
+            if not pth_path.exists():
+                missing.append(method)
+        if missing:
+            continue
+        filtered.append((r, f))
+    pairs = filtered
 
     print(f"[INFO] Found {len(pairs)} pairs -> {out_dir}")
 
@@ -281,9 +298,21 @@ def main():
                 print(f"[WARN] Missing spec for {stem}: {spec_path}")
                 continue
 
-            base_img = Image.open(spec_path).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
+            if args.overlay_from_regions:
+                region_img = (
+                    region_root
+                    / args.overlay_region_method
+                    / f"{stem}_{args.overlay_region_method}{args.overlay_region_suffix}"
+                )
+                if not region_img.exists():
+                    print(f"[WARN] Missing region image for overlay: {region_img}")
+                    continue
+                base_img = Image.open(region_img).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
+            else:
+                base_img = Image.open(spec_path).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
             mask_img = resize_mask(mask, base_img.size)
-            out_img = overlay_mask_on_image(base_img, mask_img, args.alpha)
+            color_parts = [int(c) for c in args.overlay_color.split(",")]
+            out_img = overlay_mask_on_image(base_img, mask_img, args.alpha, color_parts)
             out_img.save(out_dir / f"{stem}_diff_overlay.png")
 
             if args.save_mask:
