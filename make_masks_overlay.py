@@ -180,7 +180,7 @@ def overlay_mask_on_image(base_img: Image.Image, mask_img: Image.Image, alpha: f
     return out.convert("RGB")
 
 def _load_region_masks(pth_path: Path):
-    data = torch.load(pth_path, map_location="cpu")
+    data = torch.load(pth_path, map_location="cpu", weights_only=False)
     masks = data.get("masks", [])
     return [np.asarray(m, dtype=bool) for m in masks]
 
