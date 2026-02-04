@@ -34,7 +34,9 @@ python region_division.py \
   --output-dir "${OUT_DIR}" \
   --region_division_methods grid superpixel sam \
   --img_size 768 \
+  --div_num 10 \
   --device cuda \
   --num-shards "${NUM_SHARDS}" \
   --shard-id "${SHARD_IDX}" \
+  --overwrite \
   "$@"
