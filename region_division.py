@@ -51,6 +51,7 @@ class GPT4V(object):
                     image_files.append(data[3])
             image_files = [f'{root}/{image_file}' for image_file in image_files]
         if len(image_files) == 0:
+            print(f"No PNG images found under: {getattr(self.cfg, 'input_dir', self.cfg.dataset_name)}")
             return -1
 
         image_files.sort()
@@ -203,8 +204,8 @@ if __name__ == '__main__':
     parser.add_argument('--num-shards', type=int, default=1, help='Total number of shards.')
     parser.add_argument('--limit', type=int, default=None, help='Limit number of images to process.')
     # parser.add_argument('--dataset_name', type=str, default='visa')
-    parser.add_argument('--region_division_methods', type=list, default=['superpixel'])
-    # parser.add_argument('--region_division_methods', type=list, default=['grid', 'superpixel', 'sam'])
+    parser.add_argument('--region_division_methods', nargs='+', default=['superpixel'])
+    # parser.add_argument('--region_division_methods', nargs='+', default=['grid', 'superpixel', 'sam'])
     parser.add_argument('--img_size', type=int, default=768)
     parser.add_argument('--div_num', type=int, default=16)
     parser.add_argument('--edge_pixel', type=int, default=1)
