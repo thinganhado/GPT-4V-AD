@@ -154,7 +154,8 @@ class GPT4V(object):
             img_pil = Image.fromarray(mask_edge_number)
             draw = ImageDraw.Draw(img_pil)
             font = ImageFont.truetype('assets/arial.ttf', 10)
-            text_width, text_height = draw.textsize(text, font)
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width, text_height = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
             x1_bg, y1_bg = xc - text_width // 2, yc - text_height // 2,
             x2_bg, y2_bg = x1_bg + text_width, y1_bg + text_height
