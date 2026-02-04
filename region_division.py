@@ -54,6 +54,8 @@ class GPT4V(object):
             return -1
 
         image_files.sort()
+        if self.cfg.num_shards > 1:
+            image_files = image_files[self.cfg.shard_id::self.cfg.num_shards]
         for idx1, image_file in enumerate(image_files):
             self.img_size = self.cfg.img_size
             self.div_num = self.cfg.div_num
@@ -186,6 +188,8 @@ if __name__ == '__main__':
     parser.add_argument('--input-dir', type=str, default=None, help='Custom folder of PNG images.')
     parser.add_argument('--prompt-class', type=str, default=None, help='Class name to use in prompts.')
     parser.add_argument('--dataset_name', type=str, default='mvtec')
+    parser.add_argument('--shard-id', type=int, default=0, help='Shard index for parallel runs.')
+    parser.add_argument('--num-shards', type=int, default=1, help='Total number of shards.')
     # parser.add_argument('--dataset_name', type=str, default='visa')
     parser.add_argument('--region_division_methods', type=list, default=['superpixel'])
     # parser.add_argument('--region_division_methods', type=list, default=['grid', 'superpixel', 'sam'])
