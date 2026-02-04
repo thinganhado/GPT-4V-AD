@@ -168,11 +168,14 @@ class GPT4V(object):
             img_edge_number[mask_edge_number > 100] = mask_edge_number[mask_edge_number > 100]
 
         method_dir, base_name, suffix = self._output_paths(image_file, method)
+        mask_path = os.path.join(method_dir, f'{base_name}_{method}_masks.pth')
+        if os.path.exists(mask_path) and not getattr(self.cfg, "overwrite", False):
+            return
         cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_mask_edge.png'), cv2.cvtColor(mask_edge, cv2.COLOR_BGR2RGB))
         cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_mask_edge_number.png'), cv2.cvtColor(mask_edge_number, cv2.COLOR_BGR2RGB))
         cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_img_edge.png'), cv2.cvtColor(img_edge, cv2.COLOR_BGR2RGB))
         cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_img_edge_number.png'), cv2.cvtColor(img_edge_number, cv2.COLOR_BGR2RGB))
-        torch.save(dict(masks=masks), os.path.join(method_dir, f'{base_name}_{method}_masks.pth'))
+        torch.save(dict(masks=masks), mask_path)
 
         cls_name = self._infer_cls_name(image_file)
         prompt_cls = f"This is an image of {cls_name}."
@@ -201,6 +204,7 @@ if __name__ == '__main__':
     parser.add_argument('--prompt-class', type=str, default=None, help='Class name to use in prompts.')
     parser.add_argument('--dataset_name', type=str, default='mvtec')
     parser.add_argument('--output-dir', type=str, default=None, help='Root output folder for method subdirs.')
+    parser.add_argument('--overwrite', action='store_true', default=False, help='Overwrite existing outputs.')
     parser.add_argument('--shard-id', type=int, default=0, help='Shard index for parallel runs.')
     parser.add_argument('--num-shards', type=int, default=1, help='Total number of shards.')
     parser.add_argument('--limit', type=int, default=None, help='Limit number of images to process.')

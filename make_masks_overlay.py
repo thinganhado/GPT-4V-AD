@@ -220,6 +220,7 @@ def main():
     p.add_argument("--img_size", type=int, default=768)
     p.add_argument("--alpha", type=float, default=0.65)
     p.add_argument("--overlay_color", "--overlay-color", dest="overlay_color", type=str, default="0,0,255")
+    p.add_argument("--overwrite", action="store_true", default=False)
     p.add_argument("--save_mask", action="store_true", default=False)
 
     args = p.parse_args()
@@ -312,8 +313,12 @@ def main():
                 base_img = Image.open(spec_path).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
             mask_img = resize_mask(mask, base_img.size)
             color_parts = [int(c) for c in args.overlay_color.split(",")]
+            out_path = out_dir / f"{stem}_diff_overlay.png"
+            if out_path.exists() and not args.overwrite:
+                print(f"[SKIP] {stem} overlay exists -> {out_path}")
+                continue
             out_img = overlay_mask_on_image(base_img, mask_img, args.alpha, color_parts)
-            out_img.save(out_dir / f"{stem}_diff_overlay.png")
+            out_img.save(out_path)
 
             if args.save_mask:
                 mask_img.save(out_dir / f"{stem}_diff_mask.png")
