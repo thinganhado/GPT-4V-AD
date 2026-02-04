@@ -187,7 +187,7 @@ def _load_region_masks(pth_path: Path):
 
 def main():
     p = argparse.ArgumentParser(description="Overlay artifact masks on spectrogram images.")
-    m = p.add_mutually_exclusive_group(required=True)
+    m = p.add_mutually_exclusive_group(required=False)
     m.add_argument("--real_dir", "--real-dir", dest="real_dir", type=str, help="Directory of real audios.")
     m.add_argument("--input_pairs", "--pairs-csv", dest="input_pairs", type=str, default="/scratch3/che489/Ha/AudioDeepfake-XAI/scripts/pairs_vocv4_full.csv")
     p.add_argument("--fake_dir", "--fake-dir", dest="fake_dir", type=str, help="Directory of fake audios.")
