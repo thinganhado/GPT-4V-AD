@@ -110,7 +110,7 @@ def main() -> None:
     }
 
     rows_out: List[Dict[str, str]] = []
-    missing: List[Tuple[str, str]] = []
+    missing: List[Tuple[str, str, str]] = []
     written = 0
     skipped = 0
 
@@ -127,6 +127,7 @@ def main() -> None:
             asv_id = normalize_text(str(row.get("ASVspoof_ID", "")))
             tts_text = normalize_text(str(row.get("TTS_text", "")))
             vc_ref = normalize_text(str(row.get("VC_source_VCTK_ID", "")))
+            vctk_id = normalize_text(str(row.get("VCTK_ID", "")))
 
             if not asv_id:
                 continue
@@ -143,8 +144,14 @@ def main() -> None:
                     transcript = ref_text
                     source = str(ref_path)
 
+            if transcript is None and vctk_id and vctk_id != "-":
+                ref_text, ref_path = resolve_from_reference(vctk_id, txt_root)
+                if ref_text is not None:
+                    transcript = ref_text
+                    source = str(ref_path)
+
             if transcript is None:
-                missing.append((asv_id, vc_ref))
+                missing.append((asv_id, vc_ref, vctk_id))
                 rows_out.append(
                     {
                         "ASVspoof_ID": asv_id,
