@@ -55,6 +55,17 @@ class GPT4V(object):
             return -1
 
         image_files.sort()
+
+        if getattr(self.cfg, "samples_per_vocoder", None):
+            sampled = []
+            grouped = {}
+            for image_file in image_files:
+                vocoder = self._infer_vocoder_name(image_file)
+                grouped.setdefault(vocoder, []).append(image_file)
+            for vocoder in sorted(grouped):
+                sampled.extend(grouped[vocoder][: self.cfg.samples_per_vocoder])
+            image_files = sampled
+
         if self.cfg.num_shards > 1:
             image_files = image_files[self.cfg.shard_id::self.cfg.num_shards]
         if self.cfg.limit is not None:
@@ -81,13 +92,21 @@ class GPT4V(object):
                 self.sovle_masks(img, image_file, masks, 'grid')
                 print(f'{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for grid')
             if 'superpixel' in self.cfg.region_division_methods:
-                regions = slic(img, n_segments=60, compactness=20)
-                masks = []
-                for label in range(regions.max() + 1):
-                    mask = (regions == label)
-                    masks.append(mask)
-                self.sovle_masks(img, image_file, masks, 'superpixel')
-                print(f'{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for superpixel')
+                for compactness in self.cfg.slic_compactness:
+                    regions = slic(
+                        img,
+                        n_segments=self.cfg.slic_n_segments,
+                        compactness=compactness,
+                    )
+                    masks = []
+                    for label in range(regions.max() + 1):
+                        mask = (regions == label)
+                        masks.append(mask)
+                    method_name = f"superpixel_n{self.cfg.slic_n_segments}_c{compactness}"
+                    self.sovle_masks(img, image_file, masks, method_name)
+                    print(
+                        f"{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for {method_name}"
+                    )
             if 'sam' in self.cfg.region_division_methods:
                 masks = self.mask_generator.generate(img)
                 masks = [mask['segmentation'] for mask in masks]
@@ -126,6 +145,13 @@ class GPT4V(object):
         base_name = os.path.splitext(os.path.basename(image_file))[0]
         suffix = os.path.splitext(image_file)[-1]
         return method_dir, base_name, suffix
+
+    def _infer_vocoder_name(self, image_file):
+        base_name = os.path.splitext(os.path.basename(image_file))[0]
+        sep_token = getattr(self.cfg, "vocoder_sep_token", None)
+        if sep_token and sep_token in base_name:
+            return base_name.split(sep_token, 1)[0]
+        return base_name.split('_', 1)[0]
 
     def sovle_masks(self, img, image_file, masks, method):
         mask_edge = np.zeros_like(img, dtype=np.bool).astype(np.uint8) * 255
@@ -208,9 +234,13 @@ if __name__ == '__main__':
     parser.add_argument('--shard-id', type=int, default=0, help='Shard index for parallel runs.')
     parser.add_argument('--num-shards', type=int, default=1, help='Total number of shards.')
     parser.add_argument('--limit', type=int, default=None, help='Limit number of images to process.')
+    parser.add_argument('--samples-per-vocoder', type=int, default=None, help='Sample this many images per vocoder when using --input-dir.')
+    parser.add_argument('--vocoder-sep-token', type=str, default='_LA_', help='Token used to split vocoder name from filename stem.')
     # parser.add_argument('--dataset_name', type=str, default='visa')
     parser.add_argument('--region_division_methods', nargs='+', default=['superpixel'])
     # parser.add_argument('--region_division_methods', nargs='+', default=['grid', 'superpixel', 'sam'])
+    parser.add_argument('--slic-n-segments', type=int, default=60, help='Target number of SLIC superpixels.')
+    parser.add_argument('--slic-compactness', nargs='+', type=float, default=[20.0], help='One or more SLIC compactness values.')
     parser.add_argument('--img_size', type=int, default=768)
     parser.add_argument('--div_num', type=int, default=16)
     parser.add_argument('--edge_pixel', type=int, default=1)
