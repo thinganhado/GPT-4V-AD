@@ -2,8 +2,9 @@
 """
 Export phoneme-level timestamps to one JSON per utterance.
 
-Expected primary input is CTM from a forced aligner (for example MFA).
-Transcript text alone does not provide timestamps; alignment must happen first.
+Supported input formats:
+- ctm, csv, tsv (single file)
+- mfa_json (a single MFA JSON file or a directory containing MFA JSON files)
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import csv
 import json
 import math
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,13 +25,13 @@ def parse_args() -> argparse.Namespace:
         "--input",
         type=str,
         required=True,
-        help="Path to alignment file (.ctm, .csv, .tsv).",
+        help="Path to alignment input: file (.ctm/.csv/.tsv/.json) or directory of MFA JSON files.",
     )
     parser.add_argument(
         "--input-format",
-        choices=["auto", "ctm", "csv", "tsv"],
+        choices=["auto", "ctm", "csv", "tsv", "mfa_json"],
         default="auto",
-        help="Input format. Default infers from extension.",
+        help="Input format. Auto infers from extension or directory type.",
     )
     parser.add_argument(
         "--output-dir",
@@ -80,6 +81,8 @@ def parse_args() -> argparse.Namespace:
 def infer_format(input_path: Path, fmt: str) -> str:
     if fmt != "auto":
         return fmt
+    if input_path.is_dir():
+        return "mfa_json"
     ext = input_path.suffix.lower()
     if ext == ".ctm":
         return "ctm"
@@ -87,8 +90,10 @@ def infer_format(input_path: Path, fmt: str) -> str:
         return "csv"
     if ext in [".tsv", ".txt"]:
         return "tsv"
+    if ext == ".json":
+        return "mfa_json"
     raise ValueError(
-        f"Could not infer input format from extension '{ext}'. Use --input-format explicitly."
+        f"Could not infer input format from '{input_path}'. Use --input-format explicitly."
     )
 
 
@@ -205,6 +210,100 @@ def read_delimited(path: Path, fmt: str) -> List[dict]:
     return rows
 
 
+def _coerce_entry(entry) -> Optional[Tuple[float, float, str]]:
+    if isinstance(entry, dict):
+        start = entry.get("begin", entry.get("start", entry.get("start_sec")))
+        end = entry.get("end", entry.get("end_sec"))
+        label = entry.get("label", entry.get("text", entry.get("phone", entry.get("phoneme"))))
+    elif isinstance(entry, (list, tuple)) and len(entry) >= 3:
+        start, end, label = entry[0], entry[1], entry[2]
+    else:
+        return None
+
+    if start is None or end is None or label is None:
+        return None
+    try:
+        start_f = float(start)
+        end_f = float(end)
+    except Exception:
+        return None
+    label_s = str(label).strip()
+    if not label_s:
+        return None
+    return start_f, end_f, label_s
+
+
+def _extract_phone_entries(obj) -> List[Tuple[float, float, str]]:
+    # Common MFA JSON shape: {"tiers": {"phones": {"entries": [...]}}}
+    if isinstance(obj, dict):
+        tiers = obj.get("tiers")
+        if isinstance(tiers, dict):
+            for key in ["phones", "phone", "phoneme", "phonemes"]:
+                tier = tiers.get(key)
+                if isinstance(tier, dict) and isinstance(tier.get("entries"), list):
+                    out = []
+                    for e in tier["entries"]:
+                        c = _coerce_entry(e)
+                        if c is not None:
+                            out.append(c)
+                    if out:
+                        return out
+
+        # Alternative shapes: top-level list-like phone containers
+        for key in ["phones", "phonemes", "segments", "entries"]:
+            maybe = obj.get(key)
+            if isinstance(maybe, list):
+                out = []
+                for e in maybe:
+                    c = _coerce_entry(e)
+                    if c is not None:
+                        out.append(c)
+                if out:
+                    return out
+
+    # Entire object is already a list of entries
+    if isinstance(obj, list):
+        out = []
+        for e in obj:
+            c = _coerce_entry(e)
+            if c is not None:
+                out.append(c)
+        if out:
+            return out
+
+    return []
+
+
+def read_mfa_json(input_path: Path) -> List[dict]:
+    if input_path.is_file():
+        files = [input_path]
+    else:
+        files = sorted(input_path.rglob("*.json"))
+
+    rows: List[dict] = []
+    for file_path in files:
+        with open(file_path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+
+        utt = file_path.stem
+        entries = _extract_phone_entries(obj)
+        if not entries:
+            continue
+
+        for start, end, label in entries:
+            rows.append(
+                {
+                    "utterance_id": utt,
+                    "phoneme": label,
+                    "start_sec": float(start),
+                    "end_sec": float(end),
+                    "duration_sec": max(0.0, float(end) - float(start)),
+                    "confidence": None,
+                }
+            )
+    return rows
+
+
 def group_rows(rows: List[dict], drop_silence: bool, silence_tokens: List[str]) -> Dict[str, List[dict]]:
     silence_set = set(silence_tokens)
     grouped: Dict[str, List[dict]] = {}
@@ -268,13 +367,17 @@ def main() -> None:
     args = parse_args()
     input_path = Path(args.input)
     if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
+        raise FileNotFoundError(f"Input path not found: {input_path}")
 
     fmt = infer_format(input_path, args.input_format)
     if fmt == "ctm":
         rows = read_ctm(input_path)
-    else:
+    elif fmt in {"csv", "tsv"}:
         rows = read_delimited(input_path, fmt)
+    elif fmt == "mfa_json":
+        rows = read_mfa_json(input_path)
+    else:
+        raise ValueError(f"Unsupported input format: {fmt}")
 
     transcripts = load_transcripts(Path(args.transcript_csv)) if args.transcript_csv else {}
     grouped = group_rows(rows, args.drop_silence, args.silence_tokens)
