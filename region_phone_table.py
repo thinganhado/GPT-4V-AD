@@ -37,6 +37,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--overlay-root", type=str, required=True, help="Folder with overlay .npy masks.")
     p.add_argument("--output-csv", type=str, required=True, help="Output CSV path.")
     p.add_argument("--output-parquet", type=str, default=None, help="Optional output parquet path.")
+    p.add_argument(
+        "--region-diff-csv",
+        type=str,
+        default=None,
+        help="Optional region_diff_stats.csv from make_masks_overlay.py.",
+    )
+    p.add_argument(
+        "--topk-per-image-method",
+        type=int,
+        default=None,
+        help="If set with --region-diff-csv, keep only top-k region_id by coverage per (image, method).",
+    )
     p.add_argument("--method-glob", type=str, default="*", help="Method folder glob under masks-root.")
     p.add_argument(
         "--overlay-mode",
@@ -133,22 +145,42 @@ def get_audio_end_sec(mfa_obj: dict, phone_entries: Sequence[Tuple[float, float,
     return 0.0
 
 
-def find_overlay_path(args: argparse.Namespace, sample_id: str) -> Optional[Path]:
+def build_overlay_index(args: argparse.Namespace) -> Tuple[Dict[str, Path], Dict[str, Path]]:
     root = Path(args.overlay_root)
+    binary_idx: Dict[str, Path] = {}
+    continuous_idx: Dict[str, Path] = {}
+
+    for p in root.rglob(f"*{args.overlay_binary_suffix}"):
+        stem = p.name[: -len(args.overlay_binary_suffix)]
+        binary_idx.setdefault(stem, p)
+
+    for p in root.rglob(f"*{args.overlay_continuous_suffix}"):
+        stem = p.name[: -len(args.overlay_continuous_suffix)]
+        continuous_idx.setdefault(stem, p)
+
+    return binary_idx, continuous_idx
+
+
+def find_overlay_path(
+    args: argparse.Namespace,
+    sample_id: str,
+    binary_idx: Dict[str, Path],
+    continuous_idx: Dict[str, Path],
+) -> Optional[Path]:
     candidates = [sample_id, infer_canonical_stem(sample_id)]
     for key in candidates:
-        b = root / f"{key}{args.overlay_binary_suffix}"
-        c = root / f"{key}{args.overlay_continuous_suffix}"
+        b = binary_idx.get(key)
+        c = continuous_idx.get(key)
         if args.overlay_mode == "binary":
-            if b.exists():
+            if b is not None:
                 return b
         elif args.overlay_mode == "continuous":
-            if c.exists():
+            if c is not None:
                 return c
         else:
-            if b.exists():
+            if b is not None:
                 return b
-            if c.exists():
+            if c is not None:
                 return c
     return None
 
@@ -231,6 +263,28 @@ def collect_mask_files(masks_root: str, method_glob: str) -> List[Tuple[str, str
     return out
 
 
+def build_region_filter(region_diff_csv: Optional[str], topk_per_image_method: Optional[int]) -> Optional[set]:
+    if not region_diff_csv or not topk_per_image_method:
+        return None
+
+    df = pd.read_csv(region_diff_csv)
+    required = {"image", "method", "region_id", "coverage"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"--region-diff-csv missing columns: {sorted(missing)}. "
+            "Expected: image, method, region_id, coverage."
+        )
+
+    top = (
+        df.sort_values(["image", "method", "coverage", "region_id"], ascending=[True, True, False, True])
+        .groupby(["image", "method"], as_index=False)
+        .head(int(topk_per_image_method))
+    )
+
+    return set((str(r.image), str(r.method), int(r.region_id)) for r in top.itertuples(index=False))
+
+
 def main() -> None:
     args = parse_args()
     if pd is None:
@@ -240,6 +294,9 @@ def main() -> None:
     pairs = collect_mask_files(args.masks_root, args.method_glob)
     if len(pairs) == 0:
         raise SystemExit("No *_masks.pth files found.")
+
+    binary_idx, continuous_idx = build_overlay_index(args)
+    region_filter = build_region_filter(args.region_diff_csv, args.topk_per_image_method)
 
     rows = []
     missing_mfa = 0
@@ -258,7 +315,7 @@ def main() -> None:
         if len(masks) == 0:
             continue
 
-        overlay_path = find_overlay_path(args, sample_id)
+        overlay_path = find_overlay_path(args, sample_id, binary_idx, continuous_idx)
         if overlay_path is None:
             missing_overlay += 1
             continue
@@ -267,6 +324,8 @@ def main() -> None:
         overlay_bool = resize_nn(overlay_bool.astype(bool), h, w)
 
         for idx, mask in enumerate(masks, start=1):
+            if region_filter is not None and (sample_id, method, idx) not in region_filter:
+                continue
             t0, t1 = region_time_window(mask, audio_end_sec)
             t_label, p_label = dominant_phone(
                 t0, t1, phone_entries=phone_entries, min_overlap=args.min_speech_overlap_sec
