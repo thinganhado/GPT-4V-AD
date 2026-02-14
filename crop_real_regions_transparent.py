@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import librosa
 import matplotlib.cm as cm
@@ -28,18 +28,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pairs-csv", type=str, required=True, help="pairs_vocv4.csv path.")
     p.add_argument("--masks-root", type=str, required=True, help="Root with <method>/*_masks.pth")
     p.add_argument("--output-dir", type=str, required=True, help="Output root.")
-    p.add_argument(
-        "--region-diff-csv",
-        type=str,
-        default=None,
-        help="Optional region_diff_stats.csv for top-k filtering by coverage per (sample_id, method).",
-    )
-    p.add_argument(
-        "--topk-per-image-method",
-        type=int,
-        default=None,
-        help="If set with --region-diff-csv, keep only top-k regions by coverage per (sample_id, method).",
-    )
 
     # make_specs_768.py compatible params
     p.add_argument("--sr", type=int, default=16000)
@@ -86,49 +74,6 @@ def read_pairs_map(pairs_csv: Path) -> Dict[str, Path]:
             fake_path = Path(str(row["fake_path"]).strip())
             m[fake_path.stem] = real_path
     return m
-
-
-def _first_present(row: Dict[str, str], names: List[str]) -> Optional[str]:
-    for n in names:
-        if n in row and str(row[n]).strip() != "":
-            return str(row[n]).strip()
-    return None
-
-
-def _parse_float(v: Optional[str]) -> Optional[float]:
-    if v is None:
-        return None
-    try:
-        return float(v)
-    except Exception:
-        return None
-
-
-def load_topk_keys(diff_csv: Path, topk: int) -> Set[Tuple[str, str, int]]:
-    grouped: Dict[Tuple[str, str], List[Tuple[float, int]]] = {}
-    with open(diff_csv, "r", encoding="utf-8", newline="") as f:
-        r = csv.DictReader(f)
-        if r.fieldnames is None:
-            return set()
-        for row in r:
-            sample_id = _first_present(row, ["sample_id", "image_id", "base_name", "base"])
-            method = _first_present(row, ["method", "region_method"])
-            rid_s = _first_present(row, ["region_id", "region", "region_index"])
-            cov = _parse_float(_first_present(row, ["coverage", "diff_coverage", "coverage_ratio"]))
-            if sample_id is None or method is None or rid_s is None or cov is None:
-                continue
-            try:
-                rid = int(rid_s)
-            except Exception:
-                continue
-            grouped.setdefault((sample_id, method), []).append((cov, rid))
-
-    keep: Set[Tuple[str, str, int]] = set()
-    for (sample_id, method), vals in grouped.items():
-        vals.sort(key=lambda x: (-x[0], x[1]))
-        for _, rid in vals[:topk]:
-            keep.add((sample_id, method, rid))
-    return keep
 
 
 def load_region_mask(masks_root: Path, sample_id: str, method: str, region_id: int) -> Optional[np.ndarray]:
@@ -194,12 +139,6 @@ def main() -> None:
     args = parse_args()
 
     rows = read_table_rows(Path(args.table_csv))
-    if args.region_diff_csv and args.topk_per_image_method is not None:
-        keep = load_topk_keys(Path(args.region_diff_csv), int(args.topk_per_image_method))
-        before = len(rows)
-        rows = [x for x in rows if x in keep]
-        print(f"filtered_by_topk={before}->{len(rows)} (k={args.topk_per_image_method})")
-
     fake_to_real = read_pairs_map(Path(args.pairs_csv))
     masks_root = Path(args.masks_root)
     out_root = Path(args.output_dir)

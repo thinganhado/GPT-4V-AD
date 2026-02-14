@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 import argparse
 from pathlib import Path
 
@@ -31,6 +31,7 @@ def main():
     p.add_argument("--n-mels", type=int, default=128)
     p.add_argument("--n-fft", type=int, default=1024)
     p.add_argument("--hop", type=int, default=256)
+    p.add_argument("--overwrite", action="store_true", default=False, help="Regenerate spectrograms even if output PNG exists.")
     args = p.parse_args()
 
     in_dir = Path(args.in_dir)
@@ -39,12 +40,23 @@ def main():
     if not wavs:
         raise SystemExit(f"No wav files found under {in_dir}")
 
-    for wav in wavs:
+    total = len(wavs)
+    written = 0
+    skipped = 0
+
+    for i, wav in enumerate(wavs, 1):
         rel = wav.relative_to(in_dir).with_suffix(".png")
         out_path = out_dir / rel
-        wav_to_spec_png(wav, out_path, args.sr, args.n_mels, args.n_fft, args.hop)
 
-    print(f"Saved {len(wavs)} spectrograms to {out_dir}")
+        if out_path.exists() and not args.overwrite:
+            skipped += 1
+            continue
+
+        print(f"[{i}/{total}] generating {rel}")
+        wav_to_spec_png(wav, out_path, args.sr, args.n_mels, args.n_fft, args.hop)
+        written += 1
+
+    print(f"Done. total={total} written={written} skipped_existing={skipped} out_dir={out_dir}")
 
 
 if __name__ == "__main__":
