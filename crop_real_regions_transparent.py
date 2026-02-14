@@ -3,8 +3,10 @@
 Create transparent region crops from REAL audio using fake-region masks.
 
 - Region geometry comes from fake sample masks: <masks-root>/<method>/<fake_stem>_<method>_masks.pth
-- Real audio path is resolved from pairs CSV (real_path, fake_path, split)
-- Real spectrogram is generated on-the-fly with make_specs_768.py parameters
+- Real side is resolved from pairs CSV (real_path, fake_path, split)
+- Supports two real-image sources:
+  1) --real-spec-root: precomputed real spectrogram PNGs (matched by real stem)
+  2) fallback: on-the-fly spectrogram from real audio path
 - Output layout mirrors fake crop layout: <output-dir>/<method>/<fake_stem>__r<region_id>.png
 """
 
@@ -28,8 +30,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pairs-csv", type=str, required=True, help="pairs_vocv4.csv path.")
     p.add_argument("--masks-root", type=str, required=True, help="Root with <method>/*_masks.pth")
     p.add_argument("--output-dir", type=str, required=True, help="Output root.")
+    p.add_argument(
+        "--real-spec-root",
+        type=str,
+        default=None,
+        help="Optional root of precomputed real spectrogram PNGs (matched by real stem).",
+    )
+    p.add_argument("--real-spec-suffix", type=str, default=".png", help="Suffix for precomputed real spectrograms.")
 
-    # make_specs_768.py compatible params
+    # make_specs_768.py compatible params (used only when --real-spec-root is not set)
     p.add_argument("--sr", type=int, default=16000)
     p.add_argument("--n-mels", type=int, default=128)
     p.add_argument("--n-fft", type=int, default=1024)
@@ -74,6 +83,13 @@ def read_pairs_map(pairs_csv: Path) -> Dict[str, Path]:
             fake_path = Path(str(row["fake_path"]).strip())
             m[fake_path.stem] = real_path
     return m
+
+
+def build_spec_index(spec_root: Path, suffix: str) -> Dict[str, Path]:
+    idx: Dict[str, Path] = {}
+    for p in spec_root.rglob(f"*{suffix}"):
+        idx.setdefault(p.stem, p)
+    return idx
 
 
 def load_region_mask(masks_root: Path, sample_id: str, method: str, region_id: int) -> Optional[np.ndarray]:
@@ -146,18 +162,22 @@ def main() -> None:
 
     spec_cache: Dict[str, Image.Image] = {}
 
+    spec_index: Dict[str, Path] = {}
+    if args.real_spec_root:
+        spec_root = Path(args.real_spec_root)
+        spec_index = build_spec_index(spec_root, args.real_spec_suffix)
+        print(f"real_spec_indexed={len(spec_index)} from {spec_root}")
+
     written = 0
     missing_pair = 0
     missing_real = 0
     missing_mask = 0
+    missing_spec = 0
 
     for sample_id, method, region_id in rows:
         real_path = fake_to_real.get(sample_id)
         if real_path is None:
             missing_pair += 1
-            continue
-        if not real_path.exists():
-            missing_real += 1
             continue
 
         mask = load_region_mask(masks_root, sample_id, method, region_id)
@@ -165,10 +185,23 @@ def main() -> None:
             missing_mask += 1
             continue
 
-        key = str(real_path)
-        if key not in spec_cache:
-            spec_cache[key] = wav_to_spec_image(real_path, args.sr, args.n_mels, args.n_fft, args.hop)
-        img = spec_cache[key]
+        if args.real_spec_root:
+            spec_path = spec_index.get(real_path.stem)
+            if spec_path is None:
+                missing_spec += 1
+                continue
+            key = str(spec_path)
+            if key not in spec_cache:
+                spec_cache[key] = Image.open(spec_path).convert("RGB")
+            img = spec_cache[key]
+        else:
+            if not real_path.exists():
+                missing_real += 1
+                continue
+            key = str(real_path)
+            if key not in spec_cache:
+                spec_cache[key] = wav_to_spec_image(real_path, args.sr, args.n_mels, args.n_fft, args.hop)
+            img = spec_cache[key]
 
         if img.size[::-1] != mask.shape:
             img = img.resize((mask.shape[1], mask.shape[0]), Image.BICUBIC)
@@ -204,6 +237,7 @@ def main() -> None:
     print(f"missing_pair={missing_pair}")
     print(f"missing_real={missing_real}")
     print(f"missing_mask={missing_mask}")
+    print(f"missing_spec={missing_spec}")
     print(f"output_dir={out_root}")
 
 
