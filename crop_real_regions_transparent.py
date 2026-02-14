@@ -155,6 +155,15 @@ def draw_label(img: Image.Image, text: str) -> None:
     d.text((x, y), text, fill=(255, 255, 255, 255), font=font)
 
 
+def log_progress(i: int, total: int, args: argparse.Namespace, written: int, skipped_existing: int, missing_pair: int, missing_mask: int, missing_spec: int, missing_real: int) -> None:
+    if args.log_every > 0 and i % args.log_every == 0:
+        print(
+            f"[{i}/{total}] written={written} skipped_existing={skipped_existing} "
+            f"missing_pair={missing_pair} missing_mask={missing_mask} "
+            f"missing_spec={missing_spec} missing_real={missing_real}"
+        )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -187,17 +196,20 @@ def main() -> None:
         real_path = fake_to_real.get(sample_id)
         if real_path is None:
             missing_pair += 1
+            log_progress(i, total, args, written, skipped_existing, missing_pair, missing_mask, missing_spec, missing_real)
             continue
 
         mask = load_region_mask(masks_root, sample_id, method, region_id)
         if mask is None:
             missing_mask += 1
+            log_progress(i, total, args, written, skipped_existing, missing_pair, missing_mask, missing_spec, missing_real)
             continue
 
         if args.real_spec_root:
             spec_path = spec_index.get(real_path.stem)
             if spec_path is None:
                 missing_spec += 1
+                log_progress(i, total, args, written, skipped_existing, missing_pair, missing_mask, missing_spec, missing_real)
                 continue
             key = str(spec_path)
             if key not in spec_cache:
@@ -206,6 +218,7 @@ def main() -> None:
         else:
             if not real_path.exists():
                 missing_real += 1
+                log_progress(i, total, args, written, skipped_existing, missing_pair, missing_mask, missing_spec, missing_real)
                 continue
             key = str(real_path)
             if key not in spec_cache:
@@ -221,6 +234,7 @@ def main() -> None:
 
         bb = mask_bbox(mask)
         if bb is None:
+            log_progress(i, total, args, written, skipped_existing, missing_pair, missing_mask, missing_spec, missing_real)
             continue
         x1, y1, x2, y2 = bb
         x1 = max(0, x1 - args.pad)
@@ -238,15 +252,12 @@ def main() -> None:
         out_path = method_dir / f"{sample_id}__r{region_id}.png"
         if out_path.exists() and not args.overwrite:
             skipped_existing += 1
-            if args.log_every > 0 and i % args.log_every == 0:
-                print(f"[{i}/{total}] written={written} skipped_existing={skipped_existing}")
+            log_progress(i, total, args, written, skipped_existing, missing_pair, missing_mask, missing_spec, missing_real)
             continue
 
         crop.save(out_path)
         written += 1
-
-        if args.log_every > 0 and i % args.log_every == 0:
-            print(f"[{i}/{total}] written={written} skipped_existing={skipped_existing}")
+        log_progress(i, total, args, written, skipped_existing, missing_pair, missing_mask, missing_spec, missing_real)
 
     print(f"rows_total={total}")
     print(f"written={written}")
