@@ -49,6 +49,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--label-prefix", type=str, default="R")
     p.add_argument("--no-label", action="store_true", default=False)
     p.add_argument("--overwrite", action="store_true", default=False)
+
+    p.add_argument("--shard-id", type=int, default=0, help="Shard index for parallel workers.")
+    p.add_argument("--num-shards", type=int, default=1, help="Total number of shards/workers.")
+    p.add_argument("--log-every", type=int, default=100, help="Print progress every N processed rows.")
     return p.parse_args()
 
 
@@ -155,6 +159,9 @@ def main() -> None:
     args = parse_args()
 
     rows = read_table_rows(Path(args.table_csv))
+    if args.num_shards > 1:
+        rows = rows[args.shard_id::args.num_shards]
+
     fake_to_real = read_pairs_map(Path(args.pairs_csv))
     masks_root = Path(args.masks_root)
     out_root = Path(args.output_dir)
@@ -168,13 +175,15 @@ def main() -> None:
         spec_index = build_spec_index(spec_root, args.real_spec_suffix)
         print(f"real_spec_indexed={len(spec_index)} from {spec_root}")
 
+    total = len(rows)
     written = 0
+    skipped_existing = 0
     missing_pair = 0
     missing_real = 0
     missing_mask = 0
     missing_spec = 0
 
-    for sample_id, method, region_id in rows:
+    for i, (sample_id, method, region_id) in enumerate(rows, 1):
         real_path = fake_to_real.get(sample_id)
         if real_path is None:
             missing_pair += 1
@@ -228,16 +237,25 @@ def main() -> None:
         method_dir.mkdir(parents=True, exist_ok=True)
         out_path = method_dir / f"{sample_id}__r{region_id}.png"
         if out_path.exists() and not args.overwrite:
+            skipped_existing += 1
+            if args.log_every > 0 and i % args.log_every == 0:
+                print(f"[{i}/{total}] written={written} skipped_existing={skipped_existing}")
             continue
+
         crop.save(out_path)
         written += 1
 
-    print(f"rows_total={len(rows)}")
+        if args.log_every > 0 and i % args.log_every == 0:
+            print(f"[{i}/{total}] written={written} skipped_existing={skipped_existing}")
+
+    print(f"rows_total={total}")
     print(f"written={written}")
+    print(f"skipped_existing={skipped_existing}")
     print(f"missing_pair={missing_pair}")
     print(f"missing_real={missing_real}")
     print(f"missing_mask={missing_mask}")
     print(f"missing_spec={missing_spec}")
+    print(f"shard_id={args.shard_id} num_shards={args.num_shards}")
     print(f"output_dir={out_root}")
 
 
