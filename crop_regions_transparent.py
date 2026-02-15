@@ -20,11 +20,18 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
+import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import torch
+
+METHOD_DEFINITION_MAP = {
+    "GRID": "The crop is taken from a fixed square cell in an NxN grid over the spectrogram.",
+    "SUPERPIXEL": "The crop is taken from an irregular region formed by grouping nearby pixels with similar appearance.",
+    "SAM": "The crop is taken from a region that follows the visible edges of the pattern as closely as possible.",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +61,30 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--no-label", action="store_true", default=False, help="Disable region number label.")
     p.add_argument("--overwrite", action="store_true", default=False, help="Overwrite existing crop files.")
+    p.add_argument(
+        "--update-qwen-prompts",
+        action="store_true",
+        default=True,
+        help="Update Qwen3-VL prompt files with the active crop method wording (default: enabled).",
+    )
+    p.add_argument(
+        "--no-update-qwen-prompts",
+        dest="update_qwen_prompts",
+        action="store_false",
+        help="Disable Qwen3-VL prompt file updates.",
+    )
+    p.add_argument(
+        "--qwen-system-file",
+        type=str,
+        default=r"C:\Users\donga\OneDrive\Documents\GitHub\Qwen3-VL\prompts\region_forensics_system.txt",
+        help="Path to Qwen3-VL system prompt file.",
+    )
+    p.add_argument(
+        "--qwen-user-file",
+        type=str,
+        default=r"C:\Users\donga\OneDrive\Documents\GitHub\Qwen3-VL\prompts\region_forensics_user.txt",
+        help="Path to Qwen3-VL user prompt file.",
+    )
     return p.parse_args()
 
 
@@ -140,6 +171,44 @@ def upscale_if_needed(img_rgba: Image.Image, min_side: int) -> Image.Image:
     return img_rgba.resize((nw, nh), Image.LANCZOS)
 
 
+def _update_qwen_prompts(system_file: Path, user_file: Path, methods: Sequence[str]) -> None:
+    methods_norm = sorted({m.strip().upper() for m in methods if m.strip()})
+    if not methods_norm:
+        return
+
+    if len(methods_norm) == 1 and methods_norm[0] in METHOD_DEFINITION_MAP:
+        m = methods_norm[0]
+        method_text = f"{m}. Method definition: {METHOD_DEFINITION_MAP[m]}"
+    else:
+        listed = " / ".join(methods_norm)
+        method_text = f"{listed}. Method definition: method-specific crop definition from preprocessing."
+
+    system_line = (
+        f"- P2: cropped region from the fake spectrogram. The crop is produced by {method_text} "
+        "This crop method does not affect the artificial audio generation process."
+    )
+
+    if system_file.exists():
+        system_txt = system_file.read_text(encoding="utf-8")
+        system_txt = re.sub(
+            r"^- P2:.*$",
+            system_line,
+            system_txt,
+            flags=re.MULTILINE,
+        )
+        system_file.write_text(system_txt, encoding="utf-8")
+
+    if user_file.exists():
+        user_txt = user_file.read_text(encoding="utf-8")
+        user_txt = re.sub(
+            r"^P2 is produced by .*?(?:\r?\n|$)",
+            "",
+            user_txt,
+            flags=re.MULTILINE,
+        )
+        user_file.write_text(user_txt.strip() + "\n", encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
     table_csv = Path(args.table_csv)
@@ -148,6 +217,7 @@ def main() -> None:
     out_root = Path(args.output_dir)
 
     rows = read_rows(table_csv)
+    methods_from_rows = [m for _, m, _ in rows]
     image_idx = build_image_index(image_root, args.image_suffix)
     out_root.mkdir(parents=True, exist_ok=True)
 
@@ -200,6 +270,14 @@ def main() -> None:
     print(f"missing_mask={missing_mask}")
     print(f"missing_image={missing_image}")
     print(f"output_dir={out_root}")
+    if args.update_qwen_prompts:
+        _update_qwen_prompts(
+            system_file=Path(args.qwen_system_file),
+            user_file=Path(args.qwen_user_file),
+            methods=methods_from_rows,
+        )
+        print(f"updated_qwen_system_file={Path(args.qwen_system_file)}")
+        print(f"updated_qwen_user_file={Path(args.qwen_user_file)}")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Build a tabular region metadata file with columns:
-sample_id, method, region_id, T, F, P, diff
+sample_id, method, region_id, T, F, P, diff, feature
 
 Inputs:
 - region masks from region_division.py outputs (*_masks.pth)
@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -30,8 +31,20 @@ except ModuleNotFoundError:
     torch = None
 
 
+# ARPAbet groupings (CMUdict-style; vowels are matched after stress stripping)
+VOWELS_BASE = {
+    "AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW",
+    "AX", "AXR", "IX", "UX",
+}
+DIPHTHONGS = {"AW", "AY", "OY", "EY", "OW"}
+SONORANTS = {"M", "N", "NG", "L", "R", "W", "Y"}
+FRICATION_SET = {"F", "V", "TH", "DH", "S", "Z", "SH", "ZH", "HH", "CH", "JH"}
+VOICED_OBSTRUENTS = {"B", "D", "G", "V", "DH", "Z", "ZH", "JH"}
+VOICED_SET = VOWELS_BASE | SONORANTS | VOICED_OBSTRUENTS
+
+
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Create per-region T/F/P/diff table.")
+    p = argparse.ArgumentParser(description="Create per-region T/F/P/diff/feature table.")
     p.add_argument("--masks-root", type=str, required=True, help="Root containing <method>/*_masks.pth.")
     p.add_argument("--mfa-json-root", type=str, required=True, help="Folder with MFA JSON files.")
     p.add_argument("--overlay-root", type=str, required=True, help="Folder with overlay .npy masks.")
@@ -69,6 +82,30 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.02,
         help="If max phone overlap below this, set T=non_speech and P=none.",
+    )
+    p.add_argument(
+        "--boundary-margin-sec",
+        type=float,
+        default=0.03,
+        help="Boundary proximity threshold in seconds for Boundary/Coarticulation.",
+    )
+    p.add_argument(
+        "--diphthong-min-coverage",
+        type=float,
+        default=0.5,
+        help="Minimum region-over-phone coverage ratio to trigger diphthong boundary proxy.",
+    )
+    p.add_argument(
+        "--silence-tokens",
+        nargs="+",
+        default=["sil", "sp", "spn", "nsn", "<eps>", "SIL", "SP", "SPN", "NSN"],
+        help="Silence/non-speech token set used by non-speech gating.",
+    )
+    p.add_argument(
+        "--feature-none-label",
+        type=str,
+        default="none",
+        help="Label used when no speech-feature tag applies.",
     )
     p.add_argument(
         "--f-axis-top-is-high",
@@ -233,6 +270,91 @@ def dominant_phone(
     return "speech", best_label
 
 
+def strip_stress(phone: str) -> str:
+    return re.sub(r"\d+$", "", str(phone).strip().upper())
+
+
+def overlapping_entries(
+    t0: float, t1: float, phone_entries: Sequence[Tuple[float, float, str]]
+) -> List[Tuple[float, float, str, str, float]]:
+    out: List[Tuple[float, float, str, str, float]] = []
+    if t1 <= t0:
+        return out
+    for p0, p1, label in phone_entries:
+        ov = max(0.0, min(t1, p1) - max(t0, p0))
+        if ov > 0.0:
+            out.append((p0, p1, str(label), strip_stress(label), ov))
+    return out
+
+
+def classify_feature(
+    t_label: str,
+    p_label: str,
+    freq_band: str,
+    t0: float,
+    t1: float,
+    phone_entries: Sequence[Tuple[float, float, str]],
+    boundary_margin_sec: float,
+    diphthong_min_coverage: float,
+    silence_tokens: Sequence[str],
+    none_label: str,
+) -> str:
+    # 0) Non-speech gating: no speech-feature tag.
+    if t_label != "speech":
+        return none_label
+
+    p_base = strip_stress(p_label)
+    silence_set = {str(x).strip().upper() for x in silence_tokens}
+    if p_base in silence_set:
+        return none_label
+
+    overlaps = overlapping_entries(t0, t1, phone_entries)
+    distinct_overlap = {base for _, _, _, base, _ in overlaps}
+
+    # 1) Boundary/Coarticulation priority
+    # B1: hard boundary (>=2 distinct overlapping phones)
+    if len(distinct_overlap) >= 2:
+        return "Boundary/Coarticulation"
+
+    # B2: near-boundary case when a single phone dominates
+    if len(distinct_overlap) == 1:
+        boundaries: List[float] = []
+        for p0, p1, _ in phone_entries:
+            boundaries.append(float(p0))
+            boundaries.append(float(p1))
+        if boundaries:
+            near_start = min(abs(t0 - b) for b in boundaries) <= boundary_margin_sec
+            near_end = min(abs(t1 - b) for b in boundaries) <= boundary_margin_sec
+            if near_start or near_end:
+                return "Boundary/Coarticulation"
+
+    # B3: diphthong intra-phone transition proxy
+    if p_base in DIPHTHONGS:
+        best_cov = 0.0
+        for p0, p1, _, base, ov in overlaps:
+            if base != p_base:
+                continue
+            dur = max(1e-9, float(p1) - float(p0))
+            best_cov = max(best_cov, ov / dur)
+        if best_cov >= diphthong_min_coverage:
+            return "Boundary/Coarticulation"
+
+    # 2) Frication
+    if p_base in FRICATION_SET:
+        return "Frication"
+
+    # 3) Formants
+    if p_base in (VOWELS_BASE | SONORANTS):
+        if freq_band in {"mid", "low"}:
+            return "Formants"
+
+    # 4) Harmonic structure
+    if p_base in VOICED_SET and freq_band in {"low", "mid"}:
+        return "Harmonic structure"
+
+    return none_label
+
+
 def f_band(mask: np.ndarray, top_is_high: bool = True) -> str:
     h, _ = mask.shape
     y_idx = np.where(mask.any(axis=1))[0]
@@ -332,6 +454,18 @@ def main() -> None:
             )
             freq_band = f_band(mask, top_is_high=args.f_axis_top_is_high)
             diff = int(np.logical_and(mask, overlay_bool).sum())
+            feature = classify_feature(
+                t_label=t_label,
+                p_label=p_label,
+                freq_band=freq_band,
+                t0=t0,
+                t1=t1,
+                phone_entries=phone_entries,
+                boundary_margin_sec=args.boundary_margin_sec,
+                diphthong_min_coverage=args.diphthong_min_coverage,
+                silence_tokens=args.silence_tokens,
+                none_label=args.feature_none_label,
+            )
 
             rows.append(
                 {
@@ -342,10 +476,11 @@ def main() -> None:
                     "F": freq_band,
                     "P": p_label,
                     "diff": diff,
+                    "feature": feature,
                 }
             )
 
-    df = pd.DataFrame(rows, columns=["sample_id", "method", "region_id", "T", "F", "P", "diff"])
+    df = pd.DataFrame(rows, columns=["sample_id", "method", "region_id", "T", "F", "P", "diff", "feature"])
     out_csv = Path(args.output_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv, index=False)
@@ -366,3 +501,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
