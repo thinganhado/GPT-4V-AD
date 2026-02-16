@@ -248,7 +248,9 @@ def main() -> None:
         if img.size[::-1] != mask.shape:
             img = img.resize((mask.shape[1], mask.shape[0]), Image.BICUBIC)
 
-        rgb = np.array(img, dtype=np.uint8)
+        # Flip image and mask vertically so frequency runs bottom-to-top in outputs.
+        rgb = np.flipud(np.array(img, dtype=np.uint8))
+        mask = np.flipud(mask)
         alpha = (mask.astype(np.uint8) * 255)
         rgba = np.dstack([rgb, alpha])
 
