@@ -33,15 +33,20 @@ METHOD_DEFINITION_MAP = {
     "SAM": "The crop is taken from a region that follows the visible edges of the pattern as closely as possible.",
 }
 
+DEFAULT_TABLE_CSV = "/scratch3/che489/Ha/interspeech/datasets/region_phone_table_top3_all_with_ptype_feature.csv"
+DEFAULT_MASKS_ROOT = "/scratch3/che489/Ha/interspeech/localization/Ms_region_outputs/"
+DEFAULT_IMAGE_ROOT = "/scratch3/che489/Ha/interspeech/localization/specs/"
+ALLOWED_METHODS = {"grid", "sam", "superpixel"}
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Export transparent crops for (sample_id, method, region_id).")
-    p.add_argument("--table-csv", type=str, required=True, help="CSV with sample_id,method,region_id columns.")
-    p.add_argument("--masks-root", type=str, required=True, help="Root folder with <method>/*_masks.pth.")
+    p.add_argument("--table-csv", type=str, default=DEFAULT_TABLE_CSV, help="CSV with sample_id,method,region_id columns.")
+    p.add_argument("--masks-root", type=str, default=DEFAULT_MASKS_ROOT, help="Root folder with <method>/*_masks.pth.")
     p.add_argument(
         "--image-root",
         type=str,
-        required=True,
+        default=DEFAULT_IMAGE_ROOT,
         help="Root folder for source images (searched recursively by stem).",
     )
     p.add_argument("--image-suffix", type=str, default=".png", help="Source image suffix to index.")
@@ -98,6 +103,8 @@ def read_rows(table_csv: Path) -> List[Tuple[str, str, int]]:
         for r in reader:
             sample_id = str(r["sample_id"]).strip()
             method = str(r["method"]).strip()
+            if method.lower() not in ALLOWED_METHODS:
+                continue
             region_id = int(r["region_id"])
             rows.append((sample_id, method, region_id))
     # de-duplicate while preserving order
@@ -119,6 +126,8 @@ def build_image_index(image_root: Path, suffix: str) -> Dict[str, Path]:
 
 
 def load_region_mask(masks_root: Path, sample_id: str, method: str, region_id: int) -> Optional[np.ndarray]:
+    if method.lower() not in ALLOWED_METHODS:
+        return None
     pth = masks_root / method / f"{sample_id}_{method}_masks.pth"
     if not pth.exists():
         return None

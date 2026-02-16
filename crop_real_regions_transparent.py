@@ -23,17 +23,23 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import torch
 
+DEFAULT_TABLE_CSV = "/scratch3/che489/Ha/interspeech/datasets/region_phone_table_top3_all_with_ptype_feature.csv"
+DEFAULT_PAIRS_CSV = "/datasets/work/dss-deepfake-audio/work/data/datasets/pairs_vocv4.csv"
+DEFAULT_MASKS_ROOT = "/scratch3/che489/Ha/interspeech/localization/Ms_region_outputs/"
+DEFAULT_REAL_SPEC_ROOT = "/scratch3/che489/Ha/interspeech/datasets/specs_real_768/"
+ALLOWED_METHODS = {"grid", "sam", "superpixel"}
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Crop real-audio regions using fake masks.")
-    p.add_argument("--table-csv", type=str, required=True, help="CSV with sample_id,method,region_id columns.")
-    p.add_argument("--pairs-csv", type=str, required=True, help="pairs_vocv4.csv path.")
-    p.add_argument("--masks-root", type=str, required=True, help="Root with <method>/*_masks.pth")
+    p.add_argument("--table-csv", type=str, default=DEFAULT_TABLE_CSV, help="CSV with sample_id,method,region_id columns.")
+    p.add_argument("--pairs-csv", type=str, default=DEFAULT_PAIRS_CSV, help="pairs_vocv4.csv path.")
+    p.add_argument("--masks-root", type=str, default=DEFAULT_MASKS_ROOT, help="Root with <method>/*_masks.pth")
     p.add_argument("--output-dir", type=str, required=True, help="Output root.")
     p.add_argument(
         "--real-spec-root",
         type=str,
-        default=None,
+        default=DEFAULT_REAL_SPEC_ROOT,
         help="Optional root of precomputed real spectrogram PNGs (matched by real stem).",
     )
     p.add_argument("--real-spec-suffix", type=str, default=".png", help="Suffix for precomputed real spectrograms.")
@@ -64,7 +70,10 @@ def read_table_rows(path: Path) -> List[Tuple[str, str, int]]:
         if r.fieldnames is None or not need.issubset(set(r.fieldnames)):
             raise ValueError(f"table CSV must contain {sorted(need)}")
         for row in r:
-            rows.append((str(row["sample_id"]).strip(), str(row["method"]).strip(), int(row["region_id"])))
+            method = str(row["method"]).strip()
+            if method.lower() not in ALLOWED_METHODS:
+                continue
+            rows.append((str(row["sample_id"]).strip(), method, int(row["region_id"])))
     seen = set()
     out = []
     for x in rows:
@@ -97,6 +106,8 @@ def build_spec_index(spec_root: Path, suffix: str) -> Dict[str, Path]:
 
 
 def load_region_mask(masks_root: Path, sample_id: str, method: str, region_id: int) -> Optional[np.ndarray]:
+    if method.lower() not in ALLOWED_METHODS:
+        return None
     p = masks_root / method / f"{sample_id}_{method}_masks.pth"
     if not p.exists():
         return None
