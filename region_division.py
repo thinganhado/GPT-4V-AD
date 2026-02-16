@@ -72,8 +72,6 @@ class GPT4V(object):
             image_files = image_files[: self.cfg.limit]
         for idx1, image_file in enumerate(image_files):
             self.img_size = self.cfg.img_size
-            self.div_num = self.cfg.div_num
-            self.div_size = self.cfg.img_size // self.cfg.div_num
             self.edge_pixel = self.cfg.edge_pixel
             img = cv2.imread(image_file)
             img = cv2.resize(img, (self.cfg.img_size, self.cfg.img_size))
@@ -81,32 +79,40 @@ class GPT4V(object):
             H, W, _ = img.shape
 
             if 'grid' in self.cfg.region_division_methods:
-                masks = []
-                for i in range(self.div_num):
-                    for j in range(self.div_num):
-                        mask = np.zeros((self.img_size, self.img_size), dtype=np.bool)
-                        x1, x2 = j * self.div_size, (j + 1) * self.div_size
-                        y1, y2 = i * self.div_size, (i + 1) * self.div_size
-                        mask[y1:y2, x1:x2] = True
-                        masks.append(mask)
-                self.sovle_masks(img, image_file, masks, 'grid')
-                print(f'{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for grid')
-            if 'superpixel' in self.cfg.region_division_methods:
-                for compactness in self.cfg.slic_compactness:
-                    regions = slic(
-                        img,
-                        n_segments=self.cfg.slic_n_segments,
-                        compactness=compactness,
-                    )
+                div_candidates = self.cfg.grid_div_nums if self.cfg.grid_div_nums else [self.cfg.div_num]
+                for div_num in div_candidates:
+                    div_size = self.cfg.img_size // div_num
                     masks = []
-                    for label in range(regions.max() + 1):
-                        mask = (regions == label)
-                        masks.append(mask)
-                    method_name = f"superpixel_n{self.cfg.slic_n_segments}_c{compactness}"
+                    for i in range(div_num):
+                        for j in range(div_num):
+                            mask = np.zeros((self.img_size, self.img_size), dtype=np.bool)
+                            x1, x2 = j * div_size, (j + 1) * div_size
+                            y1, y2 = i * div_size, (i + 1) * div_size
+                            mask[y1:y2, x1:x2] = True
+                            masks.append(mask)
+                    method_name = 'grid' if len(div_candidates) == 1 else f'grid_n{div_num}'
                     self.sovle_masks(img, image_file, masks, method_name)
                     print(
-                        f"{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for {method_name}"
+                        f'{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for {method_name}'
                     )
+            if 'superpixel' in self.cfg.region_division_methods:
+                seg_candidates = self.cfg.slic_n_segments_list if self.cfg.slic_n_segments_list else [self.cfg.slic_n_segments]
+                for n_segments in seg_candidates:
+                    for compactness in self.cfg.slic_compactness:
+                        regions = slic(
+                            img,
+                            n_segments=n_segments,
+                            compactness=compactness,
+                        )
+                        masks = []
+                        for label in range(regions.max() + 1):
+                            mask = (regions == label)
+                            masks.append(mask)
+                        method_name = f"superpixel_n{n_segments}_c{compactness}"
+                        self.sovle_masks(img, image_file, masks, method_name)
+                        print(
+                            f"{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for {method_name}"
+                        )
             if 'sam' in self.cfg.region_division_methods:
                 masks = self.mask_generator.generate(img)
                 masks = [mask['segmentation'] for mask in masks]
@@ -240,9 +246,23 @@ if __name__ == '__main__':
     parser.add_argument('--region_division_methods', nargs='+', default=['superpixel'])
     # parser.add_argument('--region_division_methods', nargs='+', default=['grid', 'superpixel', 'sam'])
     parser.add_argument('--slic-n-segments', type=int, default=60, help='Target number of SLIC superpixels.')
+    parser.add_argument(
+        '--slic-n-segments-list',
+        nargs='+',
+        type=int,
+        default=None,
+        help='Optional list of SLIC n_segments values to sweep.',
+    )
     parser.add_argument('--slic-compactness', nargs='+', type=float, default=[20.0], help='One or more SLIC compactness values.')
     parser.add_argument('--img_size', type=int, default=768)
     parser.add_argument('--div_num', type=int, default=16)
+    parser.add_argument(
+        '--grid-div-nums',
+        nargs='+',
+        type=int,
+        default=None,
+        help='Optional list of grid div_num values to sweep.',
+    )
     parser.add_argument('--edge_pixel', type=int, default=1)
 
     cfg = parser.parse_args()

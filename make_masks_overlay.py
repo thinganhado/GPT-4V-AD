@@ -223,6 +223,13 @@ def main():
     p.add_argument("--overlay_color", "--overlay-color", dest="overlay_color", type=str, default="0,0,255")
     p.add_argument("--overwrite", action="store_true", default=False)
     p.add_argument("--save_mask", action="store_true", default=False)
+    p.add_argument("--topk-explain-k", type=int, default=3, help="Top-k regions for explained-difference ratio.")
+    p.add_argument(
+        "--topk-explain-min-ratio",
+        type=float,
+        default=0.5,
+        help="Pass threshold for top-k explained-difference ratio.",
+    )
 
     args = p.parse_args()
 
@@ -392,6 +399,91 @@ def main():
             writer.writeheader()
             writer.writerows(rows)
         print(f"[INFO] Wrote region overlap stats -> {csv_path}")
+
+        # Top-k explained-difference summary:
+        # explain_ratio_topk = sum(top-k overlap_pixels) / sum(all overlap_pixels)
+        by_image_method = {}
+        for r in rows:
+            key = (r["image"], r["method"])
+            by_image_method.setdefault(key, []).append(int(r["overlap_pixels"]))
+
+        per_image_method_rows = []
+        by_method = {}
+        for (image, method), overlaps in by_image_method.items():
+            if len(overlaps) == 0:
+                continue
+            total_overlap = int(np.sum(overlaps))
+            if total_overlap <= 0:
+                explain_ratio = 0.0
+                topk_overlap = 0
+            else:
+                topk_overlap = int(np.sum(sorted(overlaps, reverse=True)[: max(1, args.topk_explain_k)]))
+                explain_ratio = float(topk_overlap) / float(total_overlap)
+            passed = int(explain_ratio >= args.topk_explain_min_ratio)
+            per_image_method_rows.append(
+                {
+                    "image": image,
+                    "method": method,
+                    "topk": int(args.topk_explain_k),
+                    "topk_overlap_pixels": topk_overlap,
+                    "total_overlap_pixels": total_overlap,
+                    "explain_ratio_topk": explain_ratio,
+                    "pass_topk_ratio": passed,
+                }
+            )
+            by_method.setdefault(method, []).append(explain_ratio)
+
+        summary_img_csv = out_dir / "topk_explain_ratio_per_image_method.csv"
+        with open(summary_img_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "image",
+                    "method",
+                    "topk",
+                    "topk_overlap_pixels",
+                    "total_overlap_pixels",
+                    "explain_ratio_topk",
+                    "pass_topk_ratio",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(per_image_method_rows)
+        print(f"[INFO] Wrote top-k explain ratio per image/method -> {summary_img_csv}")
+
+        summary_method_rows = []
+        for method, vals in sorted(by_method.items()):
+            arr = np.array(vals, dtype=np.float32)
+            pass_rate = float(np.mean(arr >= float(args.topk_explain_min_ratio))) if arr.size else 0.0
+            summary_method_rows.append(
+                {
+                    "method": method,
+                    "num_images": int(arr.size),
+                    "mean_explain_ratio_topk": float(arr.mean()) if arr.size else 0.0,
+                    "median_explain_ratio_topk": float(np.median(arr)) if arr.size else 0.0,
+                    "pass_rate_topk_ratio": pass_rate,
+                    "threshold": float(args.topk_explain_min_ratio),
+                    "recommended": int((float(np.median(arr)) >= float(args.topk_explain_min_ratio)) if arr.size else 0),
+                }
+            )
+
+        summary_method_csv = out_dir / "topk_explain_ratio_per_method.csv"
+        with open(summary_method_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "method",
+                    "num_images",
+                    "mean_explain_ratio_topk",
+                    "median_explain_ratio_topk",
+                    "pass_rate_topk_ratio",
+                    "threshold",
+                    "recommended",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(summary_method_rows)
+        print(f"[INFO] Wrote top-k explain ratio per method -> {summary_method_csv}")
 
     print("[DONE] All pairs processed.")
 
