@@ -274,6 +274,20 @@ def strip_stress(phone: str) -> str:
     return re.sub(r"\d+$", "", str(phone).strip().upper())
 
 
+def phone_to_ptype(t_label: str, p_label: str, silence_tokens: Sequence[str]) -> str:
+    # Map raw MFA phone labels to {consonant, vowel, unvoiced}.
+    if t_label != "speech":
+        return "unvoiced"
+
+    p_base = strip_stress(p_label)
+    silence_set = {str(x).strip().upper() for x in silence_tokens}
+    if (not p_base) or p_base in {"NONE", "<EPS>"} or p_base in silence_set:
+        return "unvoiced"
+    if p_base in VOWELS_BASE:
+        return "vowel"
+    return "consonant"
+
+
 def overlapping_entries(
     t0: float, t1: float, phone_entries: Sequence[Tuple[float, float, str]]
 ) -> List[Tuple[float, float, str, str, float]]:
@@ -466,6 +480,11 @@ def main() -> None:
                 silence_tokens=args.silence_tokens,
                 none_label=args.feature_none_label,
             )
+            p_type = phone_to_ptype(
+                t_label=t_label,
+                p_label=p_label,
+                silence_tokens=args.silence_tokens,
+            )
 
             rows.append(
                 {
@@ -475,12 +494,16 @@ def main() -> None:
                     "T": t_label,
                     "F": freq_band,
                     "P": p_label,
+                    "P_type": p_type,
                     "diff": diff,
                     "feature": feature,
                 }
             )
 
-    df = pd.DataFrame(rows, columns=["sample_id", "method", "region_id", "T", "F", "P", "diff", "feature"])
+    df = pd.DataFrame(
+        rows,
+        columns=["sample_id", "method", "region_id", "T", "F", "P", "P_type", "diff", "feature"],
+    )
     out_csv = Path(args.output_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv, index=False)
