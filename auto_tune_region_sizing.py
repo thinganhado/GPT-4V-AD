@@ -70,6 +70,44 @@ def run_stream(cmd: List[str], prefix: str) -> None:
         raise RuntimeError(f"{prefix} failed with exit code {rc}")
 
 
+def collect_generated_stems(region_out: Path) -> set[str]:
+    stems: set[str] = set()
+    for p in region_out.rglob("*_masks.pth"):
+        method = p.parent.name
+        suffix = f"_{method}_masks.pth"
+        name = p.name
+        if name.endswith(suffix):
+            stems.add(name[: -len(suffix)])
+    return stems
+
+
+def build_subset_pairs_csv(src_pairs_csv: Path, stems: set[str], out_csv: Path) -> int:
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    kept = 0
+    with src_pairs_csv.open("r", encoding="utf-8", newline="") as fin, out_csv.open(
+        "w", encoding="utf-8", newline=""
+    ) as fout:
+        reader = csv.reader(fin)
+        writer = csv.writer(fout)
+        writer.writerow(["real_path", "fake_path"])
+        for row in reader:
+            if not row:
+                continue
+            if row[0].startswith("#") or row[0].lower() == "real_path":
+                continue
+            if len(row) < 2:
+                continue
+            real_path = row[0].strip().strip('"').strip("'")
+            fake_path = row[1].strip().strip('"').strip("'")
+            if not fake_path:
+                continue
+            stem = Path(fake_path).stem
+            if stem in stems:
+                writer.writerow([real_path, fake_path])
+                kept += 1
+    return kept
+
+
 def method_name_grid(grid_list: List[int]) -> List[str]:
     if len(grid_list) == 1:
         return ["grid"]
@@ -169,6 +207,7 @@ def main() -> None:
         round_dir = work_dir / f"round_{r:02d}"
         region_out = round_dir / "regions"
         overlay_out = round_dir / "overlay"
+        subset_pairs_csv = round_dir / "pairs_subset.csv"
         round_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n[round {r}] grid={grid_list} superpixel_n={sp_n_list} compactness={args.superpixel_compactness}")
@@ -191,16 +230,25 @@ def main() -> None:
             cmd_region.append("--overwrite")
         run_stream(cmd_region, prefix=f"region_division:r{r}")
 
+        # Build a subset pairs file from stems that were actually generated in this round.
+        stems = collect_generated_stems(region_out)
+        kept_pairs = build_subset_pairs_csv(Path(args.pairs_csv), stems, subset_pairs_csv)
+        print(f"[round {r}] subset_pairs={kept_pairs} stems={len(stems)} file={subset_pairs_csv}")
+        if kept_pairs == 0:
+            raise RuntimeError(
+                f"round {r}: no pairs matched generated stems. "
+                f"Check --input-dir and --pairs-csv stem compatibility."
+            )
+
         cmd_overlay = [
             sys.executable,
             str(overlay_script),
-            "--input_pairs", str(args.pairs_csv),
+            "--input_pairs", str(subset_pairs_csv),
             "--spec_dir", str(args.spec_dir),
             "--output_dir", str(overlay_out),
             "--region_outputs", str(region_out),
             "--region_methods", *methods,
             "--overlay_all_region_methods",
-            "--limit", str(args.subset_limit),
             "--topk-explain-k", str(args.topk),
             "--topk-explain-min-ratio", str(args.min_ratio),
         ]
@@ -221,6 +269,11 @@ def main() -> None:
         run_stream(cmd_selector, prefix=f"select_region_sizing:r{r}")
 
         summary_csv = overlay_out / "topk_explain_ratio_per_method.csv"
+        if not summary_csv.exists():
+            raise RuntimeError(
+                f"round {r}: missing method summary {summary_csv}. "
+                "Overlay step may have produced no rows."
+            )
         rows = load_method_summary(summary_csv)
         reco_this_round: Dict[str, dict] = {}
         for base in args.target_methods:
@@ -284,4 +337,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
