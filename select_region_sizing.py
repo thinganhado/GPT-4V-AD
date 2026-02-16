@@ -32,6 +32,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--topk", type=int, default=3, help="Top-k regions used in explain ratio.")
     p.add_argument("--min-ratio", type=float, default=0.5, help="Target explained ratio threshold.")
     p.add_argument("--output-dir", default=None, help="Optional output directory for summaries.")
+    p.add_argument(
+        "--selection-mode",
+        choices=["best_median", "max_granularity_pass"],
+        default="max_granularity_pass",
+        help=(
+            "best_median: choose candidate with highest median ratio. "
+            "max_granularity_pass: choose most fine-grained candidate that still meets threshold."
+        ),
+    )
     return p.parse_args()
 
 
@@ -153,7 +162,7 @@ def main() -> None:
         w.writeheader()
         w.writerows(method_summary)
 
-    # Recommend best candidate per base method by median ratio.
+    # Recommend candidate per base method.
     grouped_candidates: dict[str, list[dict]] = defaultdict(list)
     for row in method_summary:
         base, nseg, comp = parse_method(row["method"])
@@ -173,22 +182,44 @@ def main() -> None:
 
     for base in sorted(grouped_candidates):
         cands = grouped_candidates[base]
-        cands = sorted(cands, key=lambda x: (x["median"], x["pass_rate"]), reverse=True)
-        best = cands[0]
+        # always keep a fallback by best median
+        best_median = sorted(cands, key=lambda x: (x["median"], x["pass_rate"]), reverse=True)[0]
+
+        if args.selection_mode == "best_median":
+            chosen = best_median
+            reason = "best_median"
+        else:
+            passing = [c for c in cands if c["median"] >= args.min_ratio]
+            if base in {"grid", "superpixel"} and passing:
+                # choose most fine-grained candidate (largest n), break ties by median/pass rate
+                chosen = sorted(
+                    passing,
+                    key=lambda x: (x["nseg"] if x["nseg"] is not None else -1, x["median"], x["pass_rate"]),
+                    reverse=True,
+                )[0]
+                reason = "max_granularity_pass"
+            elif passing:
+                chosen = sorted(passing, key=lambda x: (x["median"], x["pass_rate"]), reverse=True)[0]
+                reason = "max_granularity_pass"
+            else:
+                chosen = best_median
+                reason = "fallback_best_median_no_pass"
+
         print(
-            f"[BEST] {base}: method={best['method']} "
-            f"median={best['median']:.4f} pass_rate={best['pass_rate']:.4f}"
+            f"[BEST] {base}: method={chosen['method']} "
+            f"median={chosen['median']:.4f} pass_rate={chosen['pass_rate']:.4f} "
+            f"(mode={reason})"
         )
         if base == "grid":
-            if best["nseg"] is not None:
-                print(f"  region_division.py arg: --div_num {best['nseg']}")
+            if chosen["nseg"] is not None:
+                print(f"  region_division.py arg: --div_num {chosen['nseg']}")
             else:
                 print("  region_division.py arg: --div_num <current grid default>")
         if base == "superpixel":
-            if best["nseg"] is not None and best["compactness"] is not None:
+            if chosen["nseg"] is not None and chosen["compactness"] is not None:
                 print(
-                    f"  region_division.py args: --slic-n-segments {best['nseg']} "
-                    f"--slic-compactness {best['compactness']}"
+                    f"  region_division.py args: --slic-n-segments {chosen['nseg']} "
+                    f"--slic-compactness {chosen['compactness']}"
                 )
             else:
                 print("  region_division.py args: --slic-n-segments <default> --slic-compactness <default>")
@@ -196,4 +227,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
