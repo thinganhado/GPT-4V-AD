@@ -10,9 +10,15 @@ import torch
 
 from skimage.segmentation import slic, find_boundaries
 from scipy.ndimage import binary_dilation
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 import warnings
 warnings.filterwarnings("ignore")
+
+try:
+    from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+except ModuleNotFoundError:
+    sam_model_registry = None
+    SamAutomaticMaskGenerator = None
+    SamPredictor = None
 
 
 class GPT4V(object):
@@ -21,6 +27,11 @@ class GPT4V(object):
         self.cfg = cfg
 
         if 'sam' in self.cfg.region_division_methods:
+            if sam_model_registry is None or SamAutomaticMaskGenerator is None:
+                raise ModuleNotFoundError(
+                    "segment_anything is required for method 'sam' but is not installed. "
+                    "Remove 'sam' from --region_division_methods or install segment_anything."
+                )
             self.sam = sam_model_registry['vit_h'](checkpoint='pretrain/sam_vit_h_4b8939.pth')
             self.sam.to(device=self.cfg.device)
             self.mask_generator = SamAutomaticMaskGenerator(self.sam)
