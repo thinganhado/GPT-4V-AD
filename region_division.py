@@ -94,22 +94,22 @@ class GPT4V(object):
             H, W, _ = img.shape
 
             if 'grid' in self.cfg.region_division_methods:
-                div_candidates = self.cfg.grid_div_nums if self.cfg.grid_div_nums else [self.cfg.div_num]
-                for div_num in div_candidates:
-                    div_size = self.cfg.img_size // div_num
-                    masks = []
-                    for i in range(div_num):
-                        for j in range(div_num):
-                            mask = np.zeros((self.img_size, self.img_size), dtype=np.bool)
-                            x1, x2 = j * div_size, (j + 1) * div_size
-                            y1, y2 = i * div_size, (i + 1) * div_size
-                            mask[y1:y2, x1:x2] = True
-                            masks.append(mask)
-                    method_name = 'grid' if len(div_candidates) == 1 else f'grid_n{div_num}'
-                    self.sovle_masks(img, image_file, masks, method_name)
-                    print(
-                        f'{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for {method_name}'
-                    )
+                # Fixed 4x4 grid.
+                div_num = 4
+                div_size = self.cfg.img_size // div_num
+                masks = []
+                for i in range(div_num):
+                    for j in range(div_num):
+                        mask = np.zeros((self.cfg.img_size, self.cfg.img_size), dtype=np.bool)
+                        x1, x2 = j * div_size, (j + 1) * div_size
+                        y1, y2 = i * div_size, (i + 1) * div_size
+                        mask[y1:y2, x1:x2] = True
+                        masks.append(mask)
+                method_name = 'grid'
+                self.sovle_masks(img, image_file, masks, method_name)
+                print(
+                    f'{self.cfg.dataset_name} --> {idx1 + 1}/{len(image_files)} {image_file} for {method_name}'
+                )
             if 'superpixel' in self.cfg.region_division_methods:
                 seg_candidates = self.cfg.slic_n_segments_list if self.cfg.slic_n_segments_list else [self.cfg.slic_n_segments]
                 for n_segments in seg_candidates:
@@ -177,7 +177,7 @@ class GPT4V(object):
 
         fig, ax = plt.subplots(figsize=((w + 220) / dpi, (h + 140) / dpi), dpi=dpi)
         ax.imshow(
-            rgb_img,
+            np.flipud(rgb_img),
             origin="lower",
             aspect="auto",
             extent=[0.0, duration_sec, 0, n_mels - 1],
