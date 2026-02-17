@@ -5,6 +5,8 @@ import os
 import pandas as pd
 import numpy as np
 import cv2
+import librosa
+import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 import torch
 
@@ -165,6 +167,38 @@ class GPT4V(object):
         suffix = os.path.splitext(image_file)[-1]
         return method_dir, base_name, suffix
 
+    def _save_with_axes_image(self, rgb_img, out_path):
+        # Match flip_region_outputs_with_axes.py axis style.
+        h, w = rgb_img.shape[:2]
+        dpi = int(getattr(self.cfg, "axis_dpi", 120))
+        duration_sec = float(getattr(self.cfg, "axis_duration_sec", 4.0))
+        sr = int(getattr(self.cfg, "axis_sr", 16000))
+        n_mels = int(getattr(self.cfg, "axis_n_mels", 128))
+
+        fig, ax = plt.subplots(figsize=((w + 220) / dpi, (h + 140) / dpi), dpi=dpi)
+        ax.imshow(
+            rgb_img,
+            origin="lower",
+            aspect="auto",
+            extent=[0.0, duration_sec, 0, n_mels - 1],
+        )
+
+        mel_hz = librosa.mel_frequencies(n_mels=n_mels, fmin=0.0, fmax=sr / 2.0)
+        y_tick_bins = np.linspace(0, n_mels - 1, 6).round().astype(int)
+        y_tick_labels = [f"{mel_hz[b] / 1000.0:.1f}" for b in y_tick_bins]
+        x_ticks = np.linspace(0.0, duration_sec, 6)
+
+        ax.set_xticks(x_ticks)
+        ax.set_yticks(y_tick_bins)
+        ax.set_yticklabels(y_tick_labels)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Frequency (kHz)")
+        ax.set_title("")
+
+        fig.subplots_adjust(left=0.16, right=0.98, bottom=0.13, top=0.98)
+        fig.savefig(out_path, dpi=dpi)
+        plt.close(fig)
+
     def _infer_vocoder_name(self, image_file):
         base_name = os.path.splitext(os.path.basename(image_file))[0]
         sep_token = getattr(self.cfg, "vocoder_sep_token", None)
@@ -220,6 +254,10 @@ class GPT4V(object):
         cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_mask_edge_number.png'), cv2.cvtColor(mask_edge_number, cv2.COLOR_BGR2RGB))
         cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_img_edge.png'), cv2.cvtColor(img_edge, cv2.COLOR_BGR2RGB))
         cv2.imwrite(os.path.join(method_dir, f'{base_name}_{method}_img_edge_number.png'), cv2.cvtColor(img_edge_number, cv2.COLOR_BGR2RGB))
+        self._save_with_axes_image(
+            img_edge_number,
+            os.path.join(method_dir, f'{base_name}_{method}_img_edge_number_axes.png'),
+        )
         torch.save(dict(masks=masks), mask_path)
 
         cls_name = self._infer_cls_name(image_file)
@@ -283,6 +321,10 @@ if __name__ == '__main__':
         default=False,
         help='Flip input spectrograms vertically before region division.',
     )
+    parser.add_argument('--axis-duration-sec', type=float, default=4.0, help='X-axis span in seconds for *_axes.png outputs.')
+    parser.add_argument('--axis-sr', type=int, default=16000, help='Sample rate used for y-axis mel scaling in *_axes.png outputs.')
+    parser.add_argument('--axis-n-mels', type=int, default=128, help='Mel bins used for y-axis labels in *_axes.png outputs.')
+    parser.add_argument('--axis-dpi', type=int, default=120, help='DPI for *_axes.png outputs.')
 
     cfg = parser.parse_args()
     runner = GPT4V(cfg)
