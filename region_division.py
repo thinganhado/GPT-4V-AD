@@ -87,6 +87,8 @@ class GPT4V(object):
             img = cv2.imread(image_file)
             img = cv2.resize(img, (self.cfg.img_size, self.cfg.img_size))
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            if getattr(self.cfg, "flip_vertical_input", False):
+                img = np.flipud(img).copy()
             H, W, _ = img.shape
 
             if 'grid' in self.cfg.region_division_methods:
@@ -275,6 +277,12 @@ if __name__ == '__main__':
         help='Optional list of grid div_num values to sweep.',
     )
     parser.add_argument('--edge_pixel', type=int, default=1)
+    parser.add_argument(
+        '--flip-vertical-input',
+        action='store_true',
+        default=False,
+        help='Flip input spectrograms vertically before region division.',
+    )
 
     cfg = parser.parse_args()
     runner = GPT4V(cfg)
