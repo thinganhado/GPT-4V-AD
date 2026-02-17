@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 import argparse
 from pathlib import Path
 
@@ -22,7 +22,7 @@ def _load_and_flip_vertical(image_path: Path) -> np.ndarray:
     with Image.open(image_path) as img:
         arr = np.array(img.convert("RGB"))
     # Bottom-to-top
-    return np.flipud(arr)
+    return arr
 
 
 def _save_with_axes(
@@ -141,3 +141,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
