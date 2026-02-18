@@ -1,12 +1,12 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-Build a tabular region metadata file with columns:
-sample_id, method, region_id, T, F, P, diff, feature
+Build a per-region metadata table with columns:
+sample_id, method, region_id, T, F, P_type
 
 Inputs:
 - region masks from region_division.py outputs (*_masks.pth)
 - MFA alignment JSON files (tiers -> phones -> entries)
-- overlay masks (e.g., *_gt_binary.npy from make_masks_overlay.py)
+- optional region_diff_stats.csv for top-k region filtering
 """
 
 from __future__ import annotations
@@ -31,23 +31,17 @@ except ModuleNotFoundError:
     torch = None
 
 
-# ARPAbet groupings (CMUdict-style; vowels are matched after stress stripping)
+# ARPAbet vowels (matched after stress stripping)
 VOWELS_BASE = {
     "AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW",
     "AX", "AXR", "IX", "UX",
 }
-DIPHTHONGS = {"AW", "AY", "OY", "EY", "OW"}
-SONORANTS = {"M", "N", "NG", "L", "R", "W", "Y"}
-FRICATION_SET = {"F", "V", "TH", "DH", "S", "Z", "SH", "ZH", "HH", "CH", "JH"}
-VOICED_OBSTRUENTS = {"B", "D", "G", "V", "DH", "Z", "ZH", "JH"}
-VOICED_SET = VOWELS_BASE | SONORANTS | VOICED_OBSTRUENTS
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Create per-region T/F/P/diff/feature table.")
+    p = argparse.ArgumentParser(description="Create per-region T/F/P_type table.")
     p.add_argument("--masks-root", type=str, required=True, help="Root containing <method>/*_masks.pth.")
     p.add_argument("--mfa-json-root", type=str, required=True, help="Folder with MFA JSON files.")
-    p.add_argument("--overlay-root", type=str, required=True, help="Folder with overlay .npy masks.")
     p.add_argument("--output-csv", type=str, required=True, help="Output CSV path.")
     p.add_argument("--output-parquet", type=str, default=None, help="Optional output parquet path.")
     p.add_argument(
@@ -64,48 +58,16 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--method-glob", type=str, default="*", help="Method folder glob under masks-root.")
     p.add_argument(
-        "--overlay-mode",
-        choices=["auto", "binary", "continuous"],
-        default="auto",
-        help="How to pick overlay files.",
-    )
-    p.add_argument("--overlay-binary-suffix", type=str, default="_gt_binary.npy")
-    p.add_argument("--overlay-continuous-suffix", type=str, default="_gt_continuous.npy")
-    p.add_argument(
-        "--continuous-threshold",
-        type=float,
-        default=0.5,
-        help="Threshold if using continuous overlay map.",
-    )
-    p.add_argument(
         "--min-speech-overlap-sec",
         type=float,
         default=0.02,
-        help="If max phone overlap below this, set T=non_speech and P=none.",
-    )
-    p.add_argument(
-        "--boundary-margin-sec",
-        type=float,
-        default=0.03,
-        help="Boundary proximity threshold in seconds for Boundary/Coarticulation.",
-    )
-    p.add_argument(
-        "--diphthong-min-coverage",
-        type=float,
-        default=0.5,
-        help="Minimum region-over-phone coverage ratio to trigger diphthong boundary proxy.",
+        help="If max phone overlap below this, set T=non_speech and P_type=unvoiced.",
     )
     p.add_argument(
         "--silence-tokens",
         nargs="+",
         default=["sil", "sp", "spn", "nsn", "<eps>", "SIL", "SP", "SPN", "NSN"],
         help="Silence/non-speech token set used by non-speech gating.",
-    )
-    p.add_argument(
-        "--feature-none-label",
-        type=str,
-        default="none",
-        help="Label used when no speech-feature tag applies.",
     )
     p.add_argument(
         "--f-axis-top-is-high",
@@ -122,12 +84,6 @@ def infer_sample_id(mask_path: str, method: str) -> str:
     if stem.endswith(suffix):
         return stem[: -len(suffix)]
     return stem
-
-
-def infer_canonical_stem(sample_id: str) -> str:
-    if "_LA_" in sample_id:
-        return "LA_" + sample_id.split("_LA_", 1)[1]
-    return sample_id
 
 
 def to_bool_array(mask) -> np.ndarray:
@@ -182,64 +138,6 @@ def get_audio_end_sec(mfa_obj: dict, phone_entries: Sequence[Tuple[float, float,
     return 0.0
 
 
-def build_overlay_index(args: argparse.Namespace) -> Tuple[Dict[str, Path], Dict[str, Path]]:
-    root = Path(args.overlay_root)
-    binary_idx: Dict[str, Path] = {}
-    continuous_idx: Dict[str, Path] = {}
-
-    for p in root.rglob(f"*{args.overlay_binary_suffix}"):
-        stem = p.name[: -len(args.overlay_binary_suffix)]
-        binary_idx.setdefault(stem, p)
-
-    for p in root.rglob(f"*{args.overlay_continuous_suffix}"):
-        stem = p.name[: -len(args.overlay_continuous_suffix)]
-        continuous_idx.setdefault(stem, p)
-
-    return binary_idx, continuous_idx
-
-
-def find_overlay_path(
-    args: argparse.Namespace,
-    sample_id: str,
-    binary_idx: Dict[str, Path],
-    continuous_idx: Dict[str, Path],
-) -> Optional[Path]:
-    candidates = [sample_id, infer_canonical_stem(sample_id)]
-    for key in candidates:
-        b = binary_idx.get(key)
-        c = continuous_idx.get(key)
-        if args.overlay_mode == "binary":
-            if b is not None:
-                return b
-        elif args.overlay_mode == "continuous":
-            if c is not None:
-                return c
-        else:
-            if b is not None:
-                return b
-            if c is not None:
-                return c
-    return None
-
-
-def load_overlay_bool(path: Path, args: argparse.Namespace) -> np.ndarray:
-    arr = np.load(path)
-    if arr.ndim != 2:
-        raise ValueError(f"Overlay mask must be 2D: {path}")
-    if path.name.endswith(args.overlay_binary_suffix):
-        return arr > 0
-    return arr >= args.continuous_threshold
-
-
-def resize_nn(arr: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
-    h, w = arr.shape
-    if (h, w) == (out_h, out_w):
-        return arr
-    y_idx = np.clip((np.arange(out_h) * h / out_h).astype(int), 0, h - 1)
-    x_idx = np.clip((np.arange(out_w) * w / out_w).astype(int), 0, w - 1)
-    return arr[np.ix_(y_idx, x_idx)]
-
-
 def region_time_window(mask: np.ndarray, audio_end_sec: float) -> Tuple[float, float]:
     h, w = mask.shape
     if w <= 1:
@@ -275,7 +173,6 @@ def strip_stress(phone: str) -> str:
 
 
 def phone_to_ptype(t_label: str, p_label: str, silence_tokens: Sequence[str]) -> str:
-    # Map raw MFA phone labels to {consonant, vowel, unvoiced}.
     if t_label != "speech":
         return "unvoiced"
 
@@ -286,87 +183,6 @@ def phone_to_ptype(t_label: str, p_label: str, silence_tokens: Sequence[str]) ->
     if p_base in VOWELS_BASE:
         return "vowel"
     return "consonant"
-
-
-def overlapping_entries(
-    t0: float, t1: float, phone_entries: Sequence[Tuple[float, float, str]]
-) -> List[Tuple[float, float, str, str, float]]:
-    out: List[Tuple[float, float, str, str, float]] = []
-    if t1 <= t0:
-        return out
-    for p0, p1, label in phone_entries:
-        ov = max(0.0, min(t1, p1) - max(t0, p0))
-        if ov > 0.0:
-            out.append((p0, p1, str(label), strip_stress(label), ov))
-    return out
-
-
-def classify_feature(
-    t_label: str,
-    p_label: str,
-    freq_band: str,
-    t0: float,
-    t1: float,
-    phone_entries: Sequence[Tuple[float, float, str]],
-    boundary_margin_sec: float,
-    diphthong_min_coverage: float,
-    silence_tokens: Sequence[str],
-    none_label: str,
-) -> str:
-    # 0) Non-speech gating: no speech-feature tag.
-    if t_label != "speech":
-        return none_label
-
-    p_base = strip_stress(p_label)
-    silence_set = {str(x).strip().upper() for x in silence_tokens}
-    if p_base in silence_set:
-        return none_label
-
-    overlaps = overlapping_entries(t0, t1, phone_entries)
-    distinct_overlap = {base for _, _, _, base, _ in overlaps}
-
-    # 1) Boundary/Coarticulation priority
-    # B1: hard boundary (>=2 distinct overlapping phones)
-    if len(distinct_overlap) >= 2:
-        return "Boundary/Coarticulation"
-
-    # B2: near-boundary case when a single phone dominates
-    if len(distinct_overlap) == 1:
-        boundaries: List[float] = []
-        for p0, p1, _ in phone_entries:
-            boundaries.append(float(p0))
-            boundaries.append(float(p1))
-        if boundaries:
-            near_start = min(abs(t0 - b) for b in boundaries) <= boundary_margin_sec
-            near_end = min(abs(t1 - b) for b in boundaries) <= boundary_margin_sec
-            if near_start or near_end:
-                return "Boundary/Coarticulation"
-
-    # B3: diphthong intra-phone transition proxy
-    if p_base in DIPHTHONGS:
-        best_cov = 0.0
-        for p0, p1, _, base, ov in overlaps:
-            if base != p_base:
-                continue
-            dur = max(1e-9, float(p1) - float(p0))
-            best_cov = max(best_cov, ov / dur)
-        if best_cov >= diphthong_min_coverage:
-            return "Boundary/Coarticulation"
-
-    # 2) Frication
-    if p_base in FRICATION_SET:
-        return "Frication"
-
-    # 3) Formants
-    if p_base in (VOWELS_BASE | SONORANTS):
-        if freq_band in {"mid", "low"}:
-            return "Formants"
-
-    # 4) Harmonic structure
-    if p_base in VOICED_SET and freq_band in {"low", "mid"}:
-        return "Harmonic structure"
-
-    return none_label
 
 
 def f_band(mask: np.ndarray, top_is_high: bool = True) -> str:
@@ -427,16 +243,15 @@ def main() -> None:
         raise SystemExit("Missing dependency: pandas")
     if torch is None:
         raise SystemExit("Missing dependency: torch")
+
     pairs = collect_mask_files(args.masks_root, args.method_glob)
     if len(pairs) == 0:
         raise SystemExit("No *_masks.pth files found.")
 
-    binary_idx, continuous_idx = build_overlay_index(args)
     region_filter = build_region_filter(args.region_diff_csv, args.topk_per_image_method)
 
     rows = []
     missing_mfa = 0
-    missing_overlay = 0
 
     for method, mask_path in pairs:
         sample_id = infer_sample_id(mask_path, method)
@@ -451,35 +266,15 @@ def main() -> None:
         if len(masks) == 0:
             continue
 
-        overlay_path = find_overlay_path(args, sample_id, binary_idx, continuous_idx)
-        if overlay_path is None:
-            missing_overlay += 1
-            continue
-        overlay_bool = load_overlay_bool(overlay_path, args)
-        h, w = masks[0].shape
-        overlay_bool = resize_nn(overlay_bool.astype(bool), h, w)
-
         for idx, mask in enumerate(masks, start=1):
             if region_filter is not None and (sample_id, method, idx) not in region_filter:
                 continue
+
             t0, t1 = region_time_window(mask, audio_end_sec)
             t_label, p_label = dominant_phone(
                 t0, t1, phone_entries=phone_entries, min_overlap=args.min_speech_overlap_sec
             )
             freq_band = f_band(mask, top_is_high=args.f_axis_top_is_high)
-            diff = int(np.logical_and(mask, overlay_bool).sum())
-            feature = classify_feature(
-                t_label=t_label,
-                p_label=p_label,
-                freq_band=freq_band,
-                t0=t0,
-                t1=t1,
-                phone_entries=phone_entries,
-                boundary_margin_sec=args.boundary_margin_sec,
-                diphthong_min_coverage=args.diphthong_min_coverage,
-                silence_tokens=args.silence_tokens,
-                none_label=args.feature_none_label,
-            )
             p_type = phone_to_ptype(
                 t_label=t_label,
                 p_label=p_label,
@@ -493,17 +288,11 @@ def main() -> None:
                     "region_id": idx,
                     "T": t_label,
                     "F": freq_band,
-                    "P": p_label,
                     "P_type": p_type,
-                    "diff": diff,
-                    "feature": feature,
                 }
             )
 
-    df = pd.DataFrame(
-        rows,
-        columns=["sample_id", "method", "region_id", "T", "F", "P", "P_type", "diff", "feature"],
-    )
+    df = pd.DataFrame(rows, columns=["sample_id", "method", "region_id", "T", "F", "P_type"])
     out_csv = Path(args.output_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv, index=False)
@@ -516,7 +305,6 @@ def main() -> None:
     print(f"rows_written={len(df)}")
     print(f"unique_samples={df['sample_id'].nunique() if len(df) else 0}")
     print(f"missing_mfa_json={missing_mfa}")
-    print(f"missing_overlay={missing_overlay}")
     print(f"output_csv={out_csv}")
     if args.output_parquet:
         print(f"output_parquet={args.output_parquet}")
@@ -524,4 +312,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
