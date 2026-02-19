@@ -80,9 +80,9 @@ def parse_args() -> argparse.Namespace:
 
 def infer_sample_id(mask_path: str, method: str) -> str:
     stem = Path(mask_path).name.replace("_masks.pth", "")
-    suffix = f"_{method}"
-    if stem.endswith(suffix):
-        return stem[: -len(suffix)]
+    marker = f"_{method}"
+    if marker in stem:
+        return stem.split(marker, 1)[0]
     return stem
 
 
