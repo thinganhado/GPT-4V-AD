@@ -24,6 +24,8 @@ def audio_to_spec_png(audio_path: Path, out_path: Path, sr: int, n_mels: int, n_
     mel_norm = (mel_db + 60.0) / 60.0
     mel_color = cm.get_cmap("magma")(mel_norm)
     mel_img = (mel_color[:, :, :3] * 255.0).clip(0, 255).astype(np.uint8)
+    # Flip vertically so low frequency is shown at the bottom.
+    mel_img = np.flipud(mel_img)
 
     img = Image.fromarray(mel_img, mode="RGB").resize((768, 768), Image.BICUBIC)
     out_path.parent.mkdir(parents=True, exist_ok=True)
