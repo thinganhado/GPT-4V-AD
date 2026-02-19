@@ -293,6 +293,9 @@ def main() -> None:
             )
 
     df = pd.DataFrame(rows, columns=["sample_id", "method", "region_id", "T", "F", "P_type"])
+    if df.empty:
+        raise SystemExit("No rows generated; refusing to write an empty CSV.")
+
     out_csv = Path(args.output_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv, index=False)
