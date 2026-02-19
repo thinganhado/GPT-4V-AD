@@ -223,6 +223,12 @@ def main():
     p.add_argument("--overlay_color", "--overlay-color", dest="overlay_color", type=str, default="0,0,255")
     p.add_argument("--overwrite", action="store_true", default=False)
     p.add_argument("--save_mask", action="store_true", default=False)
+    p.add_argument(
+        "--csv-only",
+        action="store_true",
+        default=False,
+        help="Skip writing overlay/mask images and only compute CSV outputs.",
+    )
     p.add_argument("--topk-explain-k", type=int, default=3, help="Top-k regions for explained-difference ratio.")
     p.add_argument(
         "--topk-explain-min-ratio",
@@ -302,52 +308,53 @@ def main():
             )
 
             stem = Path(f).stem
-            spec_path = spec_dir / f"{stem}{args.spec_suffix}"
-            if not spec_path.exists():
-                print(f"[WARN] Missing spec for {stem}: {spec_path}")
-                continue
-
-            color_parts = [int(c) for c in args.overlay_color.split(",")]
             diff_mask = np.array(resize_mask(mask, (args.img_size, args.img_size))) > 0
 
-            if args.save_mask:
-                Image.fromarray((diff_mask.astype(np.uint8) * 255), mode="L").save(out_dir / f"{stem}_diff_mask.png")
+            if not args.csv_only:
+                spec_path = spec_dir / f"{stem}{args.spec_suffix}"
+                if not spec_path.exists():
+                    print(f"[WARN] Missing spec for {stem}: {spec_path}")
+                    continue
 
-            if args.overlay_from_regions:
-                if args.overlay_all_region_methods:
-                    overlay_methods = list(args.region_methods)
-                else:
-                    overlay_methods = [args.overlay_region_method]
+                color_parts = [int(c) for c in args.overlay_color.split(",")]
+                if args.save_mask:
+                    Image.fromarray((diff_mask.astype(np.uint8) * 255), mode="L").save(out_dir / f"{stem}_diff_mask.png")
 
-                for overlay_method in overlay_methods:
-                    region_img = (
-                        region_root
-                        / overlay_method
-                        / f"{stem}_{overlay_method}{args.overlay_region_suffix}"
-                    )
-                    if not region_img.exists():
-                        print(f"[WARN] Missing region image for overlay ({overlay_method}): {region_img}")
-                        continue
-                    base_img = Image.open(region_img).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
-                    mask_img = resize_mask(mask, base_img.size)
+                if args.overlay_from_regions:
                     if args.overlay_all_region_methods:
-                        out_path = out_dir / f"{stem}_diff_overlay_{overlay_method}.png"
+                        overlay_methods = list(args.region_methods)
                     else:
-                        out_path = out_dir / f"{stem}_diff_overlay.png"
+                        overlay_methods = [args.overlay_region_method]
+
+                    for overlay_method in overlay_methods:
+                        region_img = (
+                            region_root
+                            / overlay_method
+                            / f"{stem}_{overlay_method}{args.overlay_region_suffix}"
+                        )
+                        if not region_img.exists():
+                            print(f"[WARN] Missing region image for overlay ({overlay_method}): {region_img}")
+                            continue
+                        base_img = Image.open(region_img).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
+                        mask_img = resize_mask(mask, base_img.size)
+                        if args.overlay_all_region_methods:
+                            out_path = out_dir / f"{stem}_diff_overlay_{overlay_method}.png"
+                        else:
+                            out_path = out_dir / f"{stem}_diff_overlay.png"
+                        if out_path.exists() and not args.overwrite:
+                            print(f"[SKIP] {stem} overlay exists -> {out_path}")
+                            continue
+                        out_img = overlay_mask_on_image(base_img, mask_img, args.alpha, color_parts)
+                        out_img.save(out_path)
+                else:
+                    base_img = Image.open(spec_path).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
+                    mask_img = resize_mask(mask, base_img.size)
+                    out_path = out_dir / f"{stem}_diff_overlay.png"
                     if out_path.exists() and not args.overwrite:
                         print(f"[SKIP] {stem} overlay exists -> {out_path}")
                         continue
                     out_img = overlay_mask_on_image(base_img, mask_img, args.alpha, color_parts)
                     out_img.save(out_path)
-            else:
-                base_img = Image.open(spec_path).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
-                mask_img = resize_mask(mask, base_img.size)
-                out_path = out_dir / f"{stem}_diff_overlay.png"
-                if out_path.exists() and not args.overwrite:
-                    print(f"[SKIP] {stem} overlay exists -> {out_path}")
-                    continue
-                out_img = overlay_mask_on_image(base_img, mask_img, args.alpha, color_parts)
-                out_img.save(out_path)
             for method in args.region_methods:
                 pth_path = region_root / method / f"{stem}_{method}_masks.pth"
                 if not pth_path.exists():
