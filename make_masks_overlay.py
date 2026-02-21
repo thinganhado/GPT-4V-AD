@@ -171,8 +171,11 @@ def resize_mask(mask, size):
     return img.resize(size, Image.NEAREST)
 
 
-def overlay_mask_on_image(base_img: Image.Image, mask_img: Image.Image, alpha: float, color):
-    base = base_img.convert("RGBA")
+def overlay_mask_on_image(base_img: Image.Image, mask_img: Image.Image, alpha: float, color, grayscale_base: bool = False):
+    if grayscale_base:
+        base = base_img.convert("L").convert("RGB").convert("RGBA")
+    else:
+        base = base_img.convert("RGBA")
     overlay = Image.new("RGBA", base.size, (color[0], color[1], color[2], 0))
     mask_alpha = mask_img.point(lambda p: int(p * alpha))
     overlay.putalpha(mask_alpha)
@@ -218,9 +221,25 @@ def main():
     p.add_argument("--thresh_quantile", type=float, default=0.95)
 
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument(
+        "--sample_ids",
+        "--sample-ids",
+        dest="sample_ids",
+        type=str,
+        default="",
+        help="Optional semicolon-separated sample_id list (stems). Only these will be processed.",
+    )
     p.add_argument("--img_size", type=int, default=768)
     p.add_argument("--alpha", type=float, default=0.65)
     p.add_argument("--overlay_color", "--overlay-color", dest="overlay_color", type=str, default="0,0,255")
+    p.add_argument(
+        "--grayscale_base",
+        "--grayscale-base",
+        dest="grayscale_base",
+        action="store_true",
+        default=False,
+        help="Convert base spectrogram image to grayscale before applying color overlay.",
+    )
     p.add_argument("--overwrite", action="store_true", default=False)
     p.add_argument("--save_mask", action="store_true", default=False)
     p.add_argument(
@@ -256,6 +275,10 @@ def main():
 
     if args.limit is not None:
         pairs = pairs[: args.limit]
+
+    if args.sample_ids.strip():
+        keep = {s.strip() for s in args.sample_ids.split(";") if s.strip()}
+        pairs = [(r, f) for (r, f) in pairs if Path(f).stem in keep]
 
     filtered = []
     for r, f in pairs:
@@ -344,7 +367,9 @@ def main():
                         if out_path.exists() and not args.overwrite:
                             print(f"[SKIP] {stem} overlay exists -> {out_path}")
                             continue
-                        out_img = overlay_mask_on_image(base_img, mask_img, args.alpha, color_parts)
+                        out_img = overlay_mask_on_image(
+                            base_img, mask_img, args.alpha, color_parts, grayscale_base=args.grayscale_base
+                        )
                         out_img.save(out_path)
                 else:
                     base_img = Image.open(spec_path).convert("RGB").resize((args.img_size, args.img_size), Image.BICUBIC)
@@ -353,7 +378,9 @@ def main():
                     if out_path.exists() and not args.overwrite:
                         print(f"[SKIP] {stem} overlay exists -> {out_path}")
                         continue
-                    out_img = overlay_mask_on_image(base_img, mask_img, args.alpha, color_parts)
+                    out_img = overlay_mask_on_image(
+                        base_img, mask_img, args.alpha, color_parts, grayscale_base=args.grayscale_base
+                    )
                     out_img.save(out_path)
             for method in args.region_methods:
                 pth_path = region_root / method / f"{stem}_{method}_masks.pth"
