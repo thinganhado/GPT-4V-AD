@@ -426,6 +426,14 @@ def main():
         help="Save paper-style spectrogram/mask visualizations from spectrogram arrays.",
     )
     p.add_argument(
+        "--save_raw",
+        "--save-raw",
+        dest="save_raw",
+        action="store_true",
+        default=False,
+        help="Also save raw (unsmoothed) paper-style annotation view.",
+    )
+    p.add_argument(
         "--save_fake_spec",
         "--save-fake-spec",
         dest="save_fake_spec",
