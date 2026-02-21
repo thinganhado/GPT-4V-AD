@@ -454,8 +454,14 @@ def main():
         "--flip-region-masks-vertical",
         dest="flip_region_masks_vertical",
         action="store_true",
-        default=False,
+        default=True,
         help="Flip region masks from *_masks.pth vertically before overlap calculation.",
+    )
+    p.add_argument(
+        "--no-flip-region-masks-vertical",
+        dest="flip_region_masks_vertical",
+        action="store_false",
+        help="Disable vertical flipping of region masks from *_masks.pth.",
     )
     p.add_argument(
         "--csv-only",
@@ -547,7 +553,7 @@ def main():
                 mask = np.flipud(mask)
             diff_mask = np.array(resize_mask(mask, (args.img_size, args.img_size))) > 0
 
-            if args.save_paper_style:
+            if (not args.csv_only) and args.save_paper_style:
                 Mb_db = _to_db_clipped(Mb_mag)
                 Ms_db = _to_db_clipped(Ms_mag)
                 G_Mb_db = _to_db_clipped(G_Mb)
@@ -578,7 +584,7 @@ def main():
                         args.hop,
                         "Annotation, 95 percent",
                     )
-            if args.save_fake_spec:
+            if (not args.csv_only) and args.save_fake_spec:
                 Ms_db = _to_db_clipped(Ms_mag)
                 G_Ms_db = _to_db_clipped(G_Ms)
                 save_single_spec_paper_style(
