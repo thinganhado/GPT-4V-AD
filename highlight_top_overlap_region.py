@@ -91,23 +91,6 @@ def draw_grid_and_ids(rgb: np.ndarray, div_num: int = 4) -> np.ndarray:
         y = int(round(i * cell_h))
         cv2.line(out, (x, 0), (x, h - 1), (255, 255, 255), 1, cv2.LINE_AA)
         cv2.line(out, (0, y), (w - 1, y), (255, 255, 255), 1, cv2.LINE_AA)
-
-    # Region numbers: white text with gray backing, row-major 1..div_num^2
-    rid = 1
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    for r in range(div_num):
-        for c in range(div_num):
-            cx = int(round((c + 0.5) * cell_w))
-            cy = int(round((r + 0.5) * cell_h))
-            text = str(rid)
-            (tw, th), baseline = cv2.getTextSize(text, font, 0.45, 1)
-            x1 = max(0, cx - tw // 2 - 1)
-            y1 = max(0, cy - th // 2 - 1)
-            x2 = min(w - 1, x1 + tw + 2)
-            y2 = min(h - 1, y1 + th + baseline + 1)
-            cv2.rectangle(out, (x1, y1), (x2, y2), (128, 128, 128), thickness=-1)
-            cv2.putText(out, text, (x1 + 1, y2 - baseline - 1), font, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
-            rid += 1
     return out
 
 
