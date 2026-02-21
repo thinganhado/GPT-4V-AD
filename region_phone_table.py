@@ -75,6 +75,18 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Assume top rows are high frequency (default true for common spectrogram images).",
     )
+    p.add_argument(
+        "--flip-left-right",
+        action="store_true",
+        default=False,
+        help="Flip each mask horizontally before alignment/features (x-axis inversion fix).",
+    )
+    p.add_argument(
+        "--flip-top-bottom",
+        action="store_true",
+        default=False,
+        help="Flip each mask vertically before alignment/features (y-axis inversion fix).",
+    )
     return p.parse_args()
 
 
@@ -269,6 +281,11 @@ def main() -> None:
         for idx, mask in enumerate(masks, start=1):
             if region_filter is not None and (sample_id, method, idx) not in region_filter:
                 continue
+
+            if args.flip_left_right:
+                mask = np.fliplr(mask)
+            if args.flip_top_bottom:
+                mask = np.flipud(mask)
 
             t0, t1 = region_time_window(mask, audio_end_sec)
             t_label, p_label = dominant_phone(
