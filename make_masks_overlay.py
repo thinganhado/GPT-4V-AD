@@ -323,11 +323,12 @@ def save_single_spec_paper_style(
     hop: int,
     title: str,
     mask: np.ndarray = None,
+    hide_axes: bool = True,
 ):
     ext = _extent(spec_db.shape[1], sr, hop)
     disp = paper_gray_from_db(spec_db)
 
-    plt.figure(figsize=(5.2, 4.2))
+    plt.figure(figsize=(6.0, 6.0))
     plt.imshow(
         disp,
         extent=ext,
@@ -349,11 +350,16 @@ def save_single_spec_paper_style(
             vmin=0,
             vmax=1,
         )
-    plt.xlabel("Time [s]")
-    plt.ylabel("Frequency [Hz]")
-    plt.title(title)
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=130)
+    if hide_axes:
+        plt.axis("off")
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        plt.savefig(out_path, dpi=130, bbox_inches="tight", pad_inches=0)
+    else:
+        plt.xlabel("Time [s]")
+        plt.ylabel("Frequency [Hz]")
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=130)
     plt.close()
 
 
