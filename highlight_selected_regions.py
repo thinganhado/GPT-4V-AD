@@ -107,7 +107,9 @@ def find_masks(masks_root: Path, sample_id: str, method_contains: str) -> Path:
 
 
 def load_mask(masks_path: Path, region_id: int) -> np.ndarray:
-    obj = torch.load(masks_path, map_location="cpu")
+    # PyTorch 2.6+ defaults to weights_only=True, which breaks loading
+    # region_division.py mask dicts containing numpy objects.
+    obj = torch.load(masks_path, map_location="cpu", weights_only=False)
     masks = obj.get("masks", None) if isinstance(obj, dict) else None
     if not isinstance(masks, (list, tuple)):
         raise ValueError(f"Invalid masks file: {masks_path}")

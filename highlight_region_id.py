@@ -43,7 +43,9 @@ def parse_color(color_str: str):
 
 
 def load_masks(masks_path: Path):
-    obj = torch.load(masks_path, map_location="cpu")
+    # PyTorch 2.6+ defaults to weights_only=True, which breaks loading
+    # region_division.py mask dicts containing numpy objects.
+    obj = torch.load(masks_path, map_location="cpu", weights_only=False)
     if not isinstance(obj, dict) or "masks" not in obj:
         raise ValueError(f"Invalid masks file format: {masks_path}")
     masks = obj["masks"]
