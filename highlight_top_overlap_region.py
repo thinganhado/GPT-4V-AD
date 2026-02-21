@@ -79,6 +79,25 @@ def draw_boundary_on_image(
     return out
 
 
+def draw_label(rgb: np.ndarray, text: str, color_rgb: Tuple[int, int, int]) -> np.ndarray:
+    out = rgb.copy()
+    # Small black backing rectangle for readability.
+    cv2.rectangle(out, (8, 8), (260, 44), (0, 0, 0), thickness=-1)
+    # cv2 uses BGR.
+    color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
+    cv2.putText(
+        out,
+        text,
+        (14, 33),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        color_bgr,
+        2,
+        cv2.LINE_AA,
+    )
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Highlight top-overlap region per sample on fake_spec_with_mask images."
@@ -159,6 +178,7 @@ def main():
 
         mask = load_region_mask(masks_path, region_id)
         highlighted = draw_boundary_on_image(rgb, mask, color_rgb, args.thickness)
+        highlighted = draw_label(highlighted, f"{method} r{region_id}", color_rgb)
 
         out_path = out_dir / f"{sample}_top_overlap_region{region_id}.png"
         cv2.imwrite(str(out_path), cv2.cvtColor(highlighted, cv2.COLOR_RGB2BGR))
