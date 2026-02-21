@@ -225,6 +225,14 @@ def main():
     p.add_argument("--overwrite", action="store_true", default=False)
     p.add_argument("--save_mask", action="store_true", default=False)
     p.add_argument(
+        "--flip_mask_vertical",
+        "--flip-mask-vertical",
+        dest="flip_mask_vertical",
+        action="store_true",
+        default=False,
+        help="Flip computed diff mask vertically before overlay/statistics.",
+    )
+    p.add_argument(
         "--csv-only",
         action="store_true",
         default=False,
@@ -310,6 +318,8 @@ def main():
             )
 
             stem = Path(f).stem
+            if args.flip_mask_vertical:
+                mask = np.flipud(mask)
             diff_mask = np.array(resize_mask(mask, (args.img_size, args.img_size))) > 0
 
             if not args.csv_only:
