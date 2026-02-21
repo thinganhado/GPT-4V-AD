@@ -12,6 +12,11 @@ import csv
 import torch
 from PIL import Image
 from scipy.ndimage import gaussian_filter1d
+import matplotlib
+from matplotlib.colors import ListedColormap
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EPS = 1e-8
@@ -145,7 +150,7 @@ def compute_mask_from_pair_magnitude(
     tau = float(np.quantile(finite, thresh_quantile)) if finite.size else 0.0
     mask = (norm_diff > tau).astype(np.uint8)
 
-    return mask, norm_diff.astype(np.float32, copy=False), tau
+    return mask, norm_diff.astype(np.float32, copy=False), tau, Mb_mag, Ms_mag, G_Mb, G_Ms
 
 
 def resize_mask(mask, size):
@@ -168,6 +173,188 @@ def _load_region_masks(pth_path: Path):
     data = torch.load(pth_path, map_location="cpu", weights_only=False)
     masks = data.get("masks", [])
     return [np.asarray(m, dtype=bool) for m in masks]
+
+
+RED_MASK_CMAP = ListedColormap(
+    [
+        [0.0, 0.0, 0.0, 0.0],  # transparent
+        [0.75, 0.0, 0.0, 1.0],  # red
+    ]
+)
+
+
+def _extent(frames: int, sr: int, hop: int):
+    t_max = frames * hop / float(sr)
+    f_max = sr / 2.0
+    return [0.0, t_max, 0.0, f_max]
+
+
+def _to_db_clipped(mag: np.ndarray) -> np.ndarray:
+    db = librosa.amplitude_to_db(np.maximum(mag, EPS), ref=np.max)
+    return np.clip(db, -60.0, 0.0)
+
+
+def paper_gray_from_db(
+    db_img: np.ndarray,
+    lo_pct: float = 5.0,
+    hi_pct: float = 99.0,
+    out_lo: float = 0.62,
+    out_hi: float = 0.96,
+    gamma: float = 1.0,
+) -> np.ndarray:
+    lo = np.percentile(db_img, lo_pct)
+    hi = np.percentile(db_img, hi_pct)
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi - lo < 1e-6:
+        lo, hi = -60.0, 0.0
+    z = (db_img - lo) / (hi - lo + 1e-12)
+    z = np.clip(z, 0.0, 1.0) ** gamma
+    return out_lo + (out_hi - out_lo) * z
+
+
+def save_annotation_overlay(bg_db: np.ndarray, mask: np.ndarray, out_path: Path, sr: int, hop: int, title: str):
+    ext = _extent(bg_db.shape[1], sr, hop)
+    bg_disp = paper_gray_from_db(bg_db)
+
+    plt.figure(figsize=(5.2, 4.2))
+    plt.imshow(
+        bg_disp,
+        extent=ext,
+        aspect="auto",
+        origin="lower",
+        cmap="gray",
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    plt.imshow(
+        np.ma.masked_where(mask == 0, mask.astype(float)),
+        extent=ext,
+        aspect="auto",
+        origin="lower",
+        cmap=RED_MASK_CMAP,
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    plt.xlabel("Time [s]")
+    plt.ylabel("Frequency [Hz]")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=130)
+    plt.close()
+
+
+def save_quicklook_paper_style(
+    out_path: Path,
+    G_Mb_db: np.ndarray,
+    G_Ms_db: np.ndarray,
+    mask: np.ndarray,
+    sr: int,
+    hop: int,
+):
+    ext = _extent(G_Mb_db.shape[1], sr, hop)
+    disp_b = paper_gray_from_db(G_Mb_db)
+    disp_s = paper_gray_from_db(G_Ms_db)
+
+    plt.figure(figsize=(12, 3.8))
+    ax1 = plt.subplot(1, 3, 1)
+    ax1.imshow(
+        disp_b,
+        extent=ext,
+        aspect="auto",
+        origin="lower",
+        cmap="gray",
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    ax1.set_title("Smoothed Real")
+    ax1.set_xlabel("Time [s]")
+    ax1.set_ylabel("Frequency [Hz]")
+
+    ax2 = plt.subplot(1, 3, 2)
+    ax2.imshow(
+        disp_s,
+        extent=ext,
+        aspect="auto",
+        origin="lower",
+        cmap="gray",
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    ax2.set_title("Smoothed Fake")
+    ax2.set_xlabel("Time [s]")
+    ax2.set_ylabel("")
+
+    ax3 = plt.subplot(1, 3, 3)
+    ax3.imshow(
+        disp_b,
+        extent=ext,
+        aspect="auto",
+        origin="lower",
+        cmap="gray",
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    ax3.imshow(
+        np.ma.masked_where(mask == 0, mask.astype(float)),
+        extent=ext,
+        aspect="auto",
+        origin="lower",
+        cmap=RED_MASK_CMAP,
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    ax3.set_title("Smoothed Annotation, 95 percent")
+    ax3.set_xlabel("Time [s]")
+    ax3.set_ylabel("")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=130)
+    plt.close()
+
+
+def save_single_spec_paper_style(
+    out_path: Path,
+    spec_db: np.ndarray,
+    sr: int,
+    hop: int,
+    title: str,
+    mask: np.ndarray = None,
+):
+    ext = _extent(spec_db.shape[1], sr, hop)
+    disp = paper_gray_from_db(spec_db)
+
+    plt.figure(figsize=(5.2, 4.2))
+    plt.imshow(
+        disp,
+        extent=ext,
+        aspect="auto",
+        origin="lower",
+        cmap="gray",
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    if mask is not None:
+        plt.imshow(
+            np.ma.masked_where(mask == 0, mask.astype(float)),
+            extent=ext,
+            aspect="auto",
+            origin="lower",
+            cmap=RED_MASK_CMAP,
+            interpolation="nearest",
+            vmin=0,
+            vmax=1,
+        )
+    plt.xlabel("Time [s]")
+    plt.ylabel("Frequency [Hz]")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=130)
+    plt.close()
 
 
 def main():
@@ -224,6 +411,22 @@ def main():
     )
     p.add_argument("--overwrite", action="store_true", default=False)
     p.add_argument("--save_mask", action="store_true", default=False)
+    p.add_argument(
+        "--save_paper_style",
+        "--save-paper-style",
+        dest="save_paper_style",
+        action="store_true",
+        default=False,
+        help="Save paper-style spectrogram/mask visualizations from spectrogram arrays.",
+    )
+    p.add_argument(
+        "--save_fake_spec",
+        "--save-fake-spec",
+        dest="save_fake_spec",
+        action="store_true",
+        default=False,
+        help="Save standalone fake spectrogram (and fake+mask) from STFT arrays.",
+    )
     p.add_argument(
         "--flip_mask_vertical",
         "--flip-mask-vertical",
@@ -301,7 +504,7 @@ def main():
             if srs != args.sr:
                 ys = librosa.resample(ys, orig_sr=srs, target_sr=args.sr)
 
-            mask, norm_diff, tau = compute_mask_from_pair_magnitude(
+            mask, norm_diff, tau, Mb_mag, Ms_mag, G_Mb, G_Ms = compute_mask_from_pair_magnitude(
                 yb,
                 ys,
                 sr=args.sr,
@@ -321,6 +524,56 @@ def main():
             if args.flip_mask_vertical:
                 mask = np.flipud(mask)
             diff_mask = np.array(resize_mask(mask, (args.img_size, args.img_size))) > 0
+
+            if args.save_paper_style:
+                Mb_db = _to_db_clipped(Mb_mag)
+                Ms_db = _to_db_clipped(Ms_mag)
+                G_Mb_db = _to_db_clipped(G_Mb)
+                G_Ms_db = _to_db_clipped(G_Ms)
+                save_annotation_overlay(
+                    G_Mb_db,
+                    mask,
+                    out_dir / f"smoothed_mask95__{stem}.png",
+                    args.sr,
+                    args.hop,
+                    "Smoothed Annotation, 95 percent",
+                )
+                save_quicklook_paper_style(
+                    out_dir / f"quicklook__{stem}.png",
+                    G_Mb_db,
+                    G_Ms_db,
+                    mask,
+                    args.sr,
+                    args.hop,
+                )
+                if args.save_raw:
+                    raw_mask = (np.abs(Ms_mag - Mb_mag) / (Mb_mag + EPS)) > tau
+                    save_annotation_overlay(
+                        Mb_db,
+                        raw_mask.astype(np.uint8),
+                        out_dir / f"raw_mask95__{stem}.png",
+                        args.sr,
+                        args.hop,
+                        "Annotation, 95 percent",
+                    )
+            if args.save_fake_spec:
+                Ms_db = _to_db_clipped(Ms_mag)
+                G_Ms_db = _to_db_clipped(G_Ms)
+                save_single_spec_paper_style(
+                    out_dir / f"fake_spec__{stem}.png",
+                    Ms_db,
+                    args.sr,
+                    args.hop,
+                    "Fake Spectrogram",
+                )
+                save_single_spec_paper_style(
+                    out_dir / f"fake_spec_with_mask__{stem}.png",
+                    G_Ms_db,
+                    args.sr,
+                    args.hop,
+                    "Smoothed Fake + Diff Mask",
+                    mask=mask,
+                )
 
             if not args.csv_only:
                 spec_path = spec_dir / f"{stem}{args.spec_suffix}"
