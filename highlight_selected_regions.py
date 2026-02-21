@@ -49,6 +49,12 @@ def parse_args():
     )
     parser.add_argument("--thickness", type=int, default=5, help="Boundary thickness in pixels.")
     parser.add_argument("--color", default="255,0,0", help="Boundary RGB color as R,G,B.")
+    parser.add_argument(
+        "--prefer-axes-image",
+        action="store_true",
+        default=False,
+        help="Prefer *_axes.png and project mask boundary onto the plotted spectrogram area.",
+    )
     return parser.parse_args()
 
 
@@ -83,6 +89,20 @@ def parse_color(color_str: str):
 
 
 def find_image(image_root: Path, sample_id: str) -> Path:
+    # Prefer non-axes by default because masks are generated on that canvas.
+    patterns = [
+        f"{sample_id}_grid_img_edge_number.png",
+        f"{sample_id}_grid_img_edge_number_axes.png",
+        f"{sample_id}.png",
+    ]
+    for pat in patterns:
+        matches = sorted(image_root.rglob(pat))
+        if matches:
+            return matches[0]
+    raise FileNotFoundError(f"No image found for sample_id={sample_id} under {image_root}")
+
+
+def find_image_axes_first(image_root: Path, sample_id: str) -> Path:
     patterns = [
         f"{sample_id}_grid_img_edge_number_axes.png",
         f"{sample_id}_grid_img_edge_number.png",
@@ -128,6 +148,39 @@ def draw_boundary(rgb: np.ndarray, mask: np.ndarray, color_rgb, thickness: int) 
     return out
 
 
+def draw_boundary_on_axes_image(rgb_axes: np.ndarray, mask: np.ndarray, color_rgb, thickness: int) -> np.ndarray:
+    """
+    Project boundary from 768x768-ish mask to *_axes.png canvas created by region_division.py:
+      fig.subplots_adjust(left=0.16, right=0.98, bottom=0.13, top=0.98)
+      ax.imshow(np.flipud(rgb_img), ...)
+    """
+    h, w = rgb_axes.shape[:2]
+    x0 = int(round(0.16 * w))
+    x1 = int(round(0.98 * w))
+    y0 = int(round(0.13 * h))
+    y1 = int(round(0.98 * h))
+    x0 = max(0, min(x0, w - 1))
+    x1 = max(x0 + 1, min(x1, w))
+    y0 = max(0, min(y0, h - 1))
+    y1 = max(y0 + 1, min(y1, h))
+
+    boundary = find_boundaries(mask, mode="inner")
+    if thickness > 1:
+        boundary = binary_dilation(boundary, iterations=thickness - 1)
+
+    # Axes image displays np.flipud(rgb_img), so flip mask vertically to align.
+    boundary = np.flipud(boundary).astype(np.uint8) * 255
+    roi_w = x1 - x0
+    roi_h = y1 - y0
+    boundary_resized = cv2.resize(boundary, (roi_w, roi_h), interpolation=cv2.INTER_NEAREST) > 0
+
+    out = rgb_axes.copy()
+    roi = out[y0:y1, x0:x1]
+    roi[boundary_resized] = np.array(color_rgb, dtype=np.uint8)
+    out[y0:y1, x0:x1] = roi
+    return out
+
+
 def main():
     args = parse_args()
     pairs = parse_pairs(args.pairs)
@@ -138,7 +191,11 @@ def main():
     out_root.mkdir(parents=True, exist_ok=True)
 
     for sample_id, region_id in pairs:
-        image_path = find_image(image_root, sample_id)
+        image_path = (
+            find_image_axes_first(image_root, sample_id)
+            if args.prefer_axes_image
+            else find_image(image_root, sample_id)
+        )
         masks_path = find_masks(masks_root, sample_id, args.method_contains)
 
         bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
@@ -147,12 +204,11 @@ def main():
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
         mask = load_mask(masks_path, region_id)
-        if mask.shape[:2] != rgb.shape[:2]:
-            raise ValueError(
-                f"Shape mismatch for {sample_id}: image={rgb.shape[:2]} mask={mask.shape[:2]} from {masks_path}"
-            )
-
-        highlighted = draw_boundary(rgb, mask, color_rgb, args.thickness)
+        if mask.shape[:2] == rgb.shape[:2]:
+            highlighted = draw_boundary(rgb, mask, color_rgb, args.thickness)
+        else:
+            # Typical case for *_axes.png: project onto plot area instead of failing.
+            highlighted = draw_boundary_on_axes_image(rgb, mask, color_rgb, args.thickness)
         out_path = out_root / f"{sample_id}_region{region_id}_highlight.png"
         cv2.imwrite(str(out_path), cv2.cvtColor(highlighted, cv2.COLOR_RGB2BGR))
         print(out_path.as_posix())
