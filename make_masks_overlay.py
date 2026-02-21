@@ -15,7 +15,6 @@ from scipy.ndimage import gaussian_filter1d
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EPS = 1e-8
-EXPECTED_LEN = 64600
 
 
 def find_pairs_in_dirs(real_dir: Path, fake_dir: Path, exts=(".wav", ".flac")) -> List[Tuple[Path, Path]]:
@@ -47,16 +46,6 @@ def read_pairs_from_csv(csv_path: Path) -> List[Tuple[Path, Path]]:
                 if rp.exists() and fp.exists():
                     pairs.append((rp, fp))
     return pairs
-
-
-def pad_or_crop_1d_np(y: np.ndarray, length: int) -> np.ndarray:
-    y = np.asarray(y, dtype=np.float32)
-    n = y.shape[0]
-    if n < length:
-        return np.pad(y, (0, length - n), mode="constant")
-    if n > length:
-        return y[:length]
-    return y
 
 
 _HANN = None
@@ -93,8 +82,9 @@ def stft_mag_torch(
 def _compute_truncate(size: int, sigma: float) -> float:
     if sigma <= 0.0:
         return 0.0
-    radius = max((size - 1) / 2.0, 0.0)
-    return max(radius / sigma, 0.0)
+    # Match reference logic:
+    # trunc = ((ksize - 1) / 2) / sigma  so effective window equals requested odd size.
+    return max(((size - 1) / 2.0) / sigma, 0.0)
 
 
 def gaussian_smooth_2d_mag(M, size_t=3, size_f=11, var_t=3.0, var_f=5.0):
@@ -119,7 +109,7 @@ def align_mel_with_dtw(Mb_mel, Ms_mel):
     return Mb_mel[:, wp[:, 0]], Ms_mel[:, wp[:, 1]]
 
 
-def compute_mask_from_pair_mel(
+def compute_mask_from_pair_magnitude(
     y_bona,
     y_spoof,
     sr=16000,
@@ -127,9 +117,6 @@ def compute_mask_from_pair_mel(
     hop=256,
     win_length=1024,
     center=True,
-    n_mels=128,
-    fmin=0.0,
-    fmax=None,
     gauss_size_t=3,
     gauss_size_f=11,
     gauss_var_t=3.0,
@@ -137,27 +124,22 @@ def compute_mask_from_pair_mel(
     use_dtw=False,
     thresh_quantile=0.95,
 ):
-    y_bona = pad_or_crop_1d_np(y_bona, EXPECTED_LEN)
-    y_spoof = pad_or_crop_1d_np(y_spoof, EXPECTED_LEN)
-
+    # Keep natural lengths; align later by min-T or DTW.
     Mb_mag = stft_mag_torch(y_bona, n_fft, hop, win_length, center, device=DEVICE)
     Ms_mag = stft_mag_torch(y_spoof, n_fft, hop, win_length, center, device=DEVICE)
 
-    mel = librosa.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=fmax)
-    Mb_mel = mel @ (Mb_mag**2)
-    Ms_mel = mel @ (Ms_mag**2)
-
     if use_dtw:
-        Mb_mel, Ms_mel = align_mel_with_dtw(Mb_mel, Ms_mel)
+        Mb_mag, Ms_mag = align_mel_with_dtw(Mb_mag, Ms_mag)
     else:
-        T = min(Mb_mel.shape[1], Ms_mel.shape[1])
-        Mb_mel, Ms_mel = Mb_mel[:, :T], Ms_mel[:, :T]
+        T = min(Mb_mag.shape[1], Ms_mag.shape[1])
+        Mb_mag, Ms_mag = Mb_mag[:, :T], Ms_mag[:, :T]
 
-    G_Mb = gaussian_smooth_2d_mag(Mb_mel, gauss_size_t, gauss_size_f, gauss_var_t, gauss_var_f)
-    G_Ms = gaussian_smooth_2d_mag(Ms_mel, gauss_size_t, gauss_size_f, gauss_var_t, gauss_var_f)
+    G_Mb = gaussian_smooth_2d_mag(Mb_mag, gauss_size_t, gauss_size_f, gauss_var_t, gauss_var_f)
+    G_Ms = gaussian_smooth_2d_mag(Ms_mag, gauss_size_t, gauss_size_f, gauss_var_t, gauss_var_f)
 
     diff = np.abs(G_Ms - G_Mb)
-    norm_diff = diff / (np.abs(G_Mb) + EPS)
+    # Match reference Eq. on linear magnitude.
+    norm_diff = diff / (G_Mb + EPS)
 
     finite = norm_diff[np.isfinite(norm_diff)]
     tau = float(np.quantile(finite, thresh_quantile)) if finite.size else 0.0
@@ -311,7 +293,7 @@ def main():
             if srs != args.sr:
                 ys = librosa.resample(ys, orig_sr=srs, target_sr=args.sr)
 
-            mask, norm_diff, tau = compute_mask_from_pair_mel(
+            mask, norm_diff, tau = compute_mask_from_pair_magnitude(
                 yb,
                 ys,
                 sr=args.sr,
@@ -319,9 +301,6 @@ def main():
                 hop=args.hop,
                 win_length=args.win_length,
                 center=args.center,
-                n_mels=args.n_mels,
-                fmin=args.fmin,
-                fmax=args.fmax,
                 gauss_size_t=args.gauss_size_t,
                 gauss_size_f=args.gauss_size_f,
                 gauss_var_t=args.gauss_var_t,
