@@ -79,22 +79,35 @@ def draw_boundary_on_image(
     return out
 
 
-def draw_label(rgb: np.ndarray, text: str, color_rgb: Tuple[int, int, int]) -> np.ndarray:
+def draw_grid_and_ids(rgb: np.ndarray, div_num: int = 4) -> np.ndarray:
     out = rgb.copy()
-    # Small black backing rectangle for readability.
-    cv2.rectangle(out, (8, 8), (260, 44), (0, 0, 0), thickness=-1)
-    # cv2 uses BGR.
-    color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
-    cv2.putText(
-        out,
-        text,
-        (14, 33),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        color_bgr,
-        2,
-        cv2.LINE_AA,
-    )
+    h, w = out.shape[:2]
+    cell_w = w / float(div_num)
+    cell_h = h / float(div_num)
+
+    # White grid lines.
+    for i in range(1, div_num):
+        x = int(round(i * cell_w))
+        y = int(round(i * cell_h))
+        cv2.line(out, (x, 0), (x, h - 1), (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.line(out, (0, y), (w - 1, y), (255, 255, 255), 1, cv2.LINE_AA)
+
+    # Region numbers: white text with gray backing, row-major 1..div_num^2
+    rid = 1
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    for r in range(div_num):
+        for c in range(div_num):
+            cx = int(round((c + 0.5) * cell_w))
+            cy = int(round((r + 0.5) * cell_h))
+            text = str(rid)
+            (tw, th), baseline = cv2.getTextSize(text, font, 0.45, 1)
+            x1 = max(0, cx - tw // 2 - 1)
+            y1 = max(0, cy - th // 2 - 1)
+            x2 = min(w - 1, x1 + tw + 2)
+            y2 = min(h - 1, y1 + th + baseline + 1)
+            cv2.rectangle(out, (x1, y1), (x2, y2), (128, 128, 128), thickness=-1)
+            cv2.putText(out, text, (x1 + 1, y2 - baseline - 1), font, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+            rid += 1
     return out
 
 
@@ -131,6 +144,12 @@ def main():
         "--sample-id",
         default="",
         help="Optional single sample_id to process.",
+    )
+    parser.add_argument(
+        "--draw-grid",
+        action="store_true",
+        default=True,
+        help="Overlay 4x4 grid lines and region numbers (grid-style).",
     )
     parser.add_argument(
         "--output-dir",
@@ -176,9 +195,11 @@ def main():
             continue
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
+        if args.draw_grid:
+            rgb = draw_grid_and_ids(rgb, div_num=4)
+
         mask = load_region_mask(masks_path, region_id)
         highlighted = draw_boundary_on_image(rgb, mask, color_rgb, args.thickness)
-        highlighted = draw_label(highlighted, f"{method} r{region_id}", color_rgb)
 
         out_path = out_dir / f"{sample}_top_overlap_region{region_id}.png"
         cv2.imwrite(str(out_path), cv2.cvtColor(highlighted, cv2.COLOR_RGB2BGR))
