@@ -112,7 +112,12 @@ def to_bool_array(mask) -> np.ndarray:
 def load_masks(mask_path: str) -> List[np.ndarray]:
     if torch is None:
         raise SystemExit("Missing dependency: torch")
-    blob = torch.load(mask_path, map_location="cpu")
+    try:
+        # PyTorch 2.6+ defaults weights_only=True; these mask files need full unpickling.
+        blob = torch.load(mask_path, map_location="cpu", weights_only=False)
+    except TypeError:
+        # Backward compatibility with older PyTorch that does not support weights_only.
+        blob = torch.load(mask_path, map_location="cpu")
     if not isinstance(blob, dict) or "masks" not in blob:
         raise ValueError(f"Unexpected mask file format: {mask_path}")
     return [to_bool_array(m) for m in blob["masks"]]
