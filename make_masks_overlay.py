@@ -450,6 +450,14 @@ def main():
         help="Flip computed diff mask vertically before overlay/statistics.",
     )
     p.add_argument(
+        "--flip_region_masks_vertical",
+        "--flip-region-masks-vertical",
+        dest="flip_region_masks_vertical",
+        action="store_true",
+        default=False,
+        help="Flip region masks from *_masks.pth vertically before overlap calculation.",
+    )
+    p.add_argument(
         "--csv-only",
         action="store_true",
         default=False,
@@ -645,6 +653,8 @@ def main():
                     continue
                 region_masks = _load_region_masks(pth_path)
                 for ridx, region_mask in enumerate(region_masks, 1):
+                    if args.flip_region_masks_vertical:
+                        region_mask = np.flipud(region_mask)
                     if region_mask.shape != diff_mask.shape:
                         region_img = Image.fromarray(region_mask.astype(np.uint8) * 255, mode="L")
                         region_mask = np.array(region_img.resize(diff_mask.shape[::-1], Image.NEAREST)) > 0
