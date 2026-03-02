@@ -156,7 +156,7 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
     frac3 = [results[v]["fractions"][3] * 100.0 for v in vocoders]
     segment_values = [frac0, frac1, frac2, frac3]
 
-    fig, ax = plt.subplots(figsize=(10, 6.8))
+    fig, ax = plt.subplots(figsize=(10.5, 7.4))
     ax.bar(display_labels, frac0, label="Overlap 0 (J=0.0)", color=OVERLAP_COLORS[0], width=0.62)
     ax.bar(display_labels, frac1, bottom=frac0, label="Overlap 1 (J=0.2)", color=OVERLAP_COLORS[1], width=0.62)
     bottom2 = [a + b for a, b in zip(frac0, frac1)]
@@ -164,19 +164,19 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
     bottom3 = [a + b + c for a, b, c in zip(frac0, frac1, frac2)]
     ax.bar(display_labels, frac3, bottom=bottom3, label="Overlap 3 (J=1.0)", color=OVERLAP_COLORS[3], width=0.62)
 
-    ax.set_ylabel("Within-vocoder pairs (%)", fontsize=14)
+    ax.set_ylabel("Within-vocoder pairs (%)", fontsize=16)
     ax.set_ylim(0, 100)
     ax.set_yticks([0, 25, 50, 75, 100])
-    ax.tick_params(axis="y", labelsize=12)
-    ax.tick_params(axis="x", labelsize=12)
+    ax.tick_params(axis="y", labelsize=14)
+    ax.tick_params(axis="x", labelsize=14)
     ax.legend(
         frameon=False,
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.18),
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.02),
         ncol=4,
         columnspacing=1.4,
         handlelength=1.3,
-        fontsize=11,
+        fontsize=13,
     )
     plt.xticks(rotation=0, ha="center")
 
@@ -194,12 +194,12 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
             label,
             ha="center",
             va="center",
-            fontsize=12,
+            fontsize=13,
             fontweight="semibold",
             color=text_color,
         )
 
-    fig.subplots_adjust(bottom=0.26)
+    fig.subplots_adjust(top=0.84)
     plt.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
