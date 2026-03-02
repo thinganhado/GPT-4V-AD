@@ -10,6 +10,18 @@ import pandas as pd
 VOCODER_RE = re.compile(r"^(?P<vocoder>.+?)_LA_")
 K = 3
 JACCARD_BY_OVERLAP = {0: 0.0, 1: 0.2, 2: 0.5, 3: 1.0}
+VOCODER_DISPLAY_NAMES = {
+    "hifigan": "HiFiGAN",
+    "hn-sinc-nsf": "Hn-NSF",
+    "hn-sinc-nsf-hifi": "NSF-HiFiGAN",
+    "waveglow": "WaveGlow",
+}
+OVERLAP_COLORS = {
+    0: "#E9DFC1",  # warm beige
+    1: "#CFE1B7",  # light sage
+    2: "#AFC9DD",  # soft blue
+    3: "#76A83B",  # deeper green
+}
 
 
 def extract_vocoder(sample_id: str) -> str:
@@ -137,25 +149,33 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
     import matplotlib.pyplot as plt
 
     vocoders = list(results.keys())
+    display_labels = [VOCODER_DISPLAY_NAMES.get(v, v) for v in vocoders]
     frac0 = [results[v]["fractions"][0] for v in vocoders]
     frac1 = [results[v]["fractions"][1] for v in vocoders]
     frac2 = [results[v]["fractions"][2] for v in vocoders]
     frac3 = [results[v]["fractions"][3] for v in vocoders]
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(vocoders, frac0, label="Overlap 0 (J=0.0)", color="#d9d9d9")
-    ax.bar(vocoders, frac1, bottom=frac0, label="Overlap 1 (J=0.2)", color="#9ecae1")
+    fig, ax = plt.subplots(figsize=(10, 6.8))
+    ax.bar(display_labels, frac0, label="Overlap 0 (J=0.0)", color=OVERLAP_COLORS[0], width=0.62)
+    ax.bar(display_labels, frac1, bottom=frac0, label="Overlap 1 (J=0.2)", color=OVERLAP_COLORS[1], width=0.62)
     bottom2 = [a + b for a, b in zip(frac0, frac1)]
-    ax.bar(vocoders, frac2, bottom=bottom2, label="Overlap 2 (J=0.5)", color="#3182bd")
+    ax.bar(display_labels, frac2, bottom=bottom2, label="Overlap 2 (J=0.5)", color=OVERLAP_COLORS[2], width=0.62)
     bottom3 = [a + b + c for a, b, c in zip(frac0, frac1, frac2)]
-    ax.bar(vocoders, frac3, bottom=bottom3, label="Overlap 3 (J=1.0)", color="#08519c")
+    ax.bar(display_labels, frac3, bottom=bottom3, label="Overlap 3 (J=1.0)", color=OVERLAP_COLORS[3], width=0.62)
 
     ax.set_ylabel("Fraction of within-vocoder pairs")
-    ax.set_xlabel("Vocoder")
     ax.set_ylim(0, 1)
     ax.set_title("Top-3 Region Overlap Distribution by Vocoder")
-    ax.legend(frameon=False)
-    plt.xticks(rotation=20, ha="right")
+    ax.legend(
+        frameon=False,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=4,
+        columnspacing=1.4,
+        handlelength=1.3,
+    )
+    plt.xticks(rotation=0, ha="center")
+    fig.subplots_adjust(bottom=0.26)
     plt.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
