@@ -150,10 +150,11 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
 
     vocoders = list(results.keys())
     display_labels = [VOCODER_DISPLAY_NAMES.get(v, v) for v in vocoders]
-    frac0 = [results[v]["fractions"][0] for v in vocoders]
-    frac1 = [results[v]["fractions"][1] for v in vocoders]
-    frac2 = [results[v]["fractions"][2] for v in vocoders]
-    frac3 = [results[v]["fractions"][3] for v in vocoders]
+    frac0 = [results[v]["fractions"][0] * 100.0 for v in vocoders]
+    frac1 = [results[v]["fractions"][1] * 100.0 for v in vocoders]
+    frac2 = [results[v]["fractions"][2] * 100.0 for v in vocoders]
+    frac3 = [results[v]["fractions"][3] * 100.0 for v in vocoders]
+    segment_values = [frac0, frac1, frac2, frac3]
 
     fig, ax = plt.subplots(figsize=(10, 6.8))
     ax.bar(display_labels, frac0, label="Overlap 0 (J=0.0)", color=OVERLAP_COLORS[0], width=0.62)
@@ -163,9 +164,11 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
     bottom3 = [a + b + c for a, b, c in zip(frac0, frac1, frac2)]
     ax.bar(display_labels, frac3, bottom=bottom3, label="Overlap 3 (J=1.0)", color=OVERLAP_COLORS[3], width=0.62)
 
-    ax.set_ylabel("Fraction of within-vocoder pairs")
-    ax.set_ylim(0, 1)
-    ax.set_title("Top-3 Region Overlap Distribution by Vocoder")
+    ax.set_ylabel("Within-vocoder pairs (%)", fontsize=14)
+    ax.set_ylim(0, 100)
+    ax.set_yticks([0, 25, 50, 75, 100])
+    ax.tick_params(axis="y", labelsize=12)
+    ax.tick_params(axis="x", labelsize=12)
     ax.legend(
         frameon=False,
         loc="upper center",
@@ -173,8 +176,29 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
         ncol=4,
         columnspacing=1.4,
         handlelength=1.3,
+        fontsize=11,
     )
     plt.xticks(rotation=0, ha="center")
+
+    for idx, vocoder in enumerate(vocoders):
+        values = [segment_values[level][idx] for level in range(4)]
+        dominant_level = max(range(4), key=lambda level: values[level])
+        lower = sum(values[:dominant_level])
+        height = values[dominant_level]
+        y = lower + (height / 2.0)
+        label = f"{height:.1f}%"
+        text_color = "white" if dominant_level in (2, 3) else "#1f1f1f"
+        ax.text(
+            idx,
+            y,
+            label,
+            ha="center",
+            va="center",
+            fontsize=12,
+            fontweight="semibold",
+            color=text_color,
+        )
+
     fig.subplots_adjust(bottom=0.26)
     plt.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
