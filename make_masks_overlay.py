@@ -378,6 +378,14 @@ def main():
     p.add_argument("--overlay_region_method", "--overlay-region-method", dest="overlay_region_method", type=str, default="grid")
     p.add_argument("--overlay_all_region_methods", "--overlay-all-region-methods", dest="overlay_all_region_methods", action="store_true", help="Generate one overlay per method in --region_methods.")
     p.add_argument("--overlay_region_suffix", "--overlay-region-suffix", dest="overlay_region_suffix", type=str, default="_img_edge_number.png")
+    p.add_argument(
+        "--region_mask_suffix",
+        "--region-mask-suffix",
+        dest="region_mask_suffix",
+        type=str,
+        default="_masks.pth",
+        help="Suffix appended after '<sample_id>_<method>' to locate region mask files.",
+    )
 
     p.add_argument("--sr", type=int, default=16000)
     p.add_argument("--n_fft", type=int, default=1024)
@@ -506,7 +514,7 @@ def main():
         stem = Path(f).stem
         missing = []
         for method in args.region_methods:
-            pth_path = region_root / method / f"{stem}_{method}_masks.pth"
+            pth_path = region_root / method / f"{stem}_{method}{args.region_mask_suffix}"
             if not pth_path.exists():
                 missing.append(method)
         if missing:
@@ -653,7 +661,7 @@ def main():
                     )
                     out_img.save(out_path)
             for method in args.region_methods:
-                pth_path = region_root / method / f"{stem}_{method}_masks.pth"
+                pth_path = region_root / method / f"{stem}_{method}{args.region_mask_suffix}"
                 if not pth_path.exists():
                     print(f"[WARN] Missing region masks for {stem} ({method}): {pth_path}")
                     continue
