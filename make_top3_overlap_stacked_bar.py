@@ -164,11 +164,11 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
     bottom3 = [a + b + c for a, b, c in zip(frac0, frac1, frac2)]
     ax.bar(display_labels, frac3, bottom=bottom3, label="Overlap 3 (J=1.0)", color=OVERLAP_COLORS[3], width=0.62)
 
-    ax.set_ylabel("Within-vocoder pairs (%)", fontsize=16)
+    ax.set_ylabel("Within-vocoder pairs (%)", fontsize=17)
     ax.set_ylim(0, 100)
     ax.set_yticks([0, 25, 50, 75, 100])
-    ax.tick_params(axis="y", labelsize=14)
-    ax.tick_params(axis="x", labelsize=14)
+    ax.tick_params(axis="y", labelsize=15)
+    ax.tick_params(axis="x", labelsize=15)
     ax.legend(
         frameon=False,
         loc="lower center",
@@ -176,7 +176,7 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
         ncol=4,
         columnspacing=1.4,
         handlelength=1.3,
-        fontsize=13,
+        fontsize=14,
     )
     plt.xticks(rotation=0, ha="center")
 
@@ -187,16 +187,15 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
         height = values[dominant_level]
         y = lower + (height / 2.0)
         label = f"{height:.1f}%"
-        text_color = "white" if dominant_level in (2, 3) else "#1f1f1f"
         ax.text(
             idx,
             y,
             label,
             ha="center",
             va="center",
-            fontsize=13,
+            fontsize=16,
             fontweight="semibold",
-            color=text_color,
+            color="black",
         )
 
     fig.subplots_adjust(top=0.84)
