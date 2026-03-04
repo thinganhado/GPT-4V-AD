@@ -17,10 +17,16 @@ VOCODER_DISPLAY_NAMES = {
     "waveglow": "WaveGlow",
 }
 OVERLAP_COLORS = {
-    0: "#E9DFC1",  # warm beige
-    1: "#CFE1B7",  # light sage
-    2: "#AFC9DD",  # soft blue
-    3: "#76A83B",  # deeper green
+    0: "#DCEAF6",  # very light blue
+    1: "#AFCFE8",  # light blue
+    2: "#6FADD8",  # medium blue
+    3: "#2F6FA3",  # dark blue
+}
+OVERLAP_HATCHES = {
+    0: None,
+    1: "///",
+    2: None,
+    3: "xx",
 }
 
 
@@ -157,12 +163,51 @@ def maybe_plot(results: dict, out_path: Path) -> Path:
     segment_values = [frac0, frac1, frac2, frac3]
 
     fig, ax = plt.subplots(figsize=(10.5, 7.4))
-    ax.bar(display_labels, frac0, label="Overlap 0 (J=0.0)", color=OVERLAP_COLORS[0], width=0.62)
-    ax.bar(display_labels, frac1, bottom=frac0, label="Overlap 1 (J=0.2)", color=OVERLAP_COLORS[1], width=0.62)
+    ax.bar(
+        display_labels,
+        frac0,
+        label="Overlap 0 (J=0.0)",
+        color=OVERLAP_COLORS[0],
+        edgecolor="#4A4A4A",
+        linewidth=0.4,
+        hatch=OVERLAP_HATCHES[0],
+        width=0.62,
+    )
+    ax.bar(
+        display_labels,
+        frac1,
+        bottom=frac0,
+        label="Overlap 1 (J=0.2)",
+        color=OVERLAP_COLORS[1],
+        edgecolor="#4A4A4A",
+        linewidth=0.4,
+        hatch=OVERLAP_HATCHES[1],
+        width=0.62,
+    )
     bottom2 = [a + b for a, b in zip(frac0, frac1)]
-    ax.bar(display_labels, frac2, bottom=bottom2, label="Overlap 2 (J=0.5)", color=OVERLAP_COLORS[2], width=0.62)
+    ax.bar(
+        display_labels,
+        frac2,
+        bottom=bottom2,
+        label="Overlap 2 (J=0.5)",
+        color=OVERLAP_COLORS[2],
+        edgecolor="#4A4A4A",
+        linewidth=0.4,
+        hatch=OVERLAP_HATCHES[2],
+        width=0.62,
+    )
     bottom3 = [a + b + c for a, b, c in zip(frac0, frac1, frac2)]
-    ax.bar(display_labels, frac3, bottom=bottom3, label="Overlap 3 (J=1.0)", color=OVERLAP_COLORS[3], width=0.62)
+    ax.bar(
+        display_labels,
+        frac3,
+        bottom=bottom3,
+        label="Overlap 3 (J=1.0)",
+        color=OVERLAP_COLORS[3],
+        edgecolor="#4A4A4A",
+        linewidth=0.4,
+        hatch=OVERLAP_HATCHES[3],
+        width=0.62,
+    )
 
     ax.set_ylabel("Within-vocoder pairs (%)", fontsize=17)
     ax.set_ylim(0, 100)
