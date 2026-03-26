@@ -39,11 +39,9 @@ def read_csv_rows(path: Path) -> List[Dict[str, str]]:
             with open(path, "r", newline="", encoding=enc) as f:
                 sample = f.read(4096)
                 f.seek(0)
-                try:
-                    dialect = csv.Sniffer().sniff(sample)
-                except csv.Error:
-                    dialect = csv.excel_tab if "\t" in sample else csv.excel
-                return list(csv.DictReader(f, dialect=dialect))
+                first_line = sample.splitlines()[0] if sample else ""
+                delimiter = "\t" if "\t" in first_line and "," not in first_line else ","
+                return list(csv.DictReader(f, delimiter=delimiter))
         except UnicodeDecodeError as exc:
             last_exc = exc
     if last_exc is not None:
