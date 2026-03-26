@@ -30,7 +30,6 @@ GAUSS_VAR_T = 3.0
 GAUSS_VAR_F = 5.0
 THRESH_QUANTILE = 0.95
 LABEL_MODE = "region"
-FLIP_STEP4_MASK_VERTICAL = True
 
 
 def read_csv_rows(path: Path) -> List[Dict[str, str]]:
@@ -230,9 +229,9 @@ def overlay_red_mask(base_rgb: np.ndarray, red_mask: np.ndarray, alpha: float) -
 
 def render_selected_mask_view(fake_mag: np.ndarray, diff_mask: np.ndarray, selected_region_ids: Sequence[int], div_num: int, size: int) -> np.ndarray:
     base = to_fake_gray_image(fake_mag, size)
-    if FLIP_STEP4_MASK_VERTICAL:
-        diff_mask = np.flipud(diff_mask)
-    diff_mask_resized = resize_bool_mask(diff_mask, size)
+    # Keep the spectrogram background and selected 4x4 cells in display orientation.
+    # Only the computed diff mask is flipped to match the original overlay pipeline.
+    diff_mask_resized = resize_bool_mask(np.flipud(diff_mask), size)
     masks = build_grid_masks(size, div_num)
     selected_union = np.zeros((size, size), dtype=bool)
     for rid in selected_region_ids:
@@ -312,8 +311,7 @@ def main() -> None:
             gauss_var_f=GAUSS_VAR_F,
             thresh_quantile=THRESH_QUANTILE,
         )
-        diff_mask_to_save = np.flipud(diff_mask) if FLIP_STEP4_MASK_VERTICAL else diff_mask
-        Image.fromarray((resize_bool_mask(diff_mask_to_save, IMG_SIZE).astype(np.uint8) * 255), mode="L").save(meta_dir / f"{sample_id}_diff_mask.png")
+        Image.fromarray((resize_bool_mask(np.flipud(diff_mask), IMG_SIZE).astype(np.uint8) * 255), mode="L").save(meta_dir / f"{sample_id}_diff_mask.png")
         selected_mask = render_selected_mask_view(fake_mag, diff_mask, selected[sample_id], DIV_NUM, IMG_SIZE)
         save_rgb(step4_dir / f"{vocoder}.png", selected_mask)
 
