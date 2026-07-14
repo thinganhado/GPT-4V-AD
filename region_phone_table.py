@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         "--min-speech-overlap-sec",
         type=float,
         default=0.02,
-        help="If max phone overlap below this, set T=non_speech and P_type=unvoiced.",
+        help="If max phone overlap is below this, set T=non_speech and P_type=none.",
     )
     p.add_argument(
         "--silence-tokens",
@@ -191,12 +191,14 @@ def strip_stress(phone: str) -> str:
 
 def phone_to_ptype(t_label: str, p_label: str, silence_tokens: Sequence[str]) -> str:
     if t_label != "speech":
-        return "unvoiced"
+        # No phone is aligned to this region. Keep the CSV value explicit rather
+        # than treating absence of a phone as the phonetic class "unvoiced".
+        return "none"
 
     p_base = strip_stress(p_label)
     silence_set = {str(x).strip().upper() for x in silence_tokens}
     if (not p_base) or p_base in {"NONE", "<EPS>"} or p_base in silence_set:
-        return "unvoiced"
+        return "none"
     if p_base in VOWELS_BASE:
         return "vowel"
     return "consonant"
